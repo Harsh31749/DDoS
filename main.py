@@ -15,6 +15,7 @@ from exporter import export_results
 import pandas as pd
 import joblib
 import os
+import json
 
 
 def main():
@@ -57,10 +58,46 @@ def main():
     export_results(summary_df, cv_summary, all_results, mi_scores)
 
     print("\n✅ Pipeline complete. Check the outputs/ folder for results.")
-    print("\n💾 Saving Random Forest model for real-time deployment...")
-    joblib.dump(all_results["Random Forest"]["model"], "outputs/random_forest_model.pkl")
+
+    # Pick deployment model dynamically using a balanced policy by default.
+    # You can override with DEPLOYMENT_SELECTION_POLICY = recall | precision | f1 | balanced_f1
+    selection_policy = os.getenv("DEPLOYMENT_SELECTION_POLICY", "balanced_f1").strip().lower()
+    if selection_policy == "recall":
+        key_fn = lambda kv: (kv[1]["recall"], kv[1]["f1"], kv[1]["accuracy"])
+    elif selection_policy == "precision":
+        key_fn = lambda kv: (kv[1]["precision"], kv[1]["f1"], kv[1]["recall"])
+    elif selection_policy == "f1":
+        key_fn = lambda kv: (kv[1]["f1"], kv[1]["precision"], kv[1]["recall"])
+    else:
+        # default: balanced production choice that penalizes false positives better than pure recall
+        selection_policy = "balanced_f1"
+        key_fn = lambda kv: (kv[1]["f1"], kv[1]["precision"], kv[1]["recall"], kv[1]["accuracy"])
+
+    best_model_name, best_result = max(all_results.items(), key=key_fn)
+
+    print(f"\n💾 Saving best model for deployment: {best_model_name}")
+    deployed_model_path = "outputs/deployed_model.pkl"
+    joblib.dump(best_result["model"], deployed_model_path)
+
+    # Backward compatibility with older scripts expecting this filename.
+    if "Random Forest" in all_results:
+        joblib.dump(all_results["Random Forest"]["model"], "outputs/random_forest_model.pkl")
+
+    deployment_meta = {
+        "selected_model": best_model_name,
+        "model_path": deployed_model_path,
+        "selection_metric": selection_policy,
+        "recall": float(best_result["recall"]),
+        "precision": float(best_result["precision"]),
+        "f1": float(best_result["f1"]),
+        "accuracy": float(best_result["accuracy"]),
+    }
+    with open("outputs/deployment_config.json", "w", encoding="utf-8") as f:
+        json.dump(deployment_meta, f, indent=2)
+
     if scaler:
         joblib.dump(scaler, "outputs/minmax_scaler.pkl")
+    joblib.dump(label_encoder, "outputs/label_encoder.pkl")
     
     # Save the exact names of the top 20 features we used
     selected_features = list(X_selected.columns)

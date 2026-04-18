@@ -1,0 +1,9 @@
+{
+  "selected_model": "Random Forest",
+  "model_path": "outputs/deployed_model.pkl",
+  "selection_metric": "balanced_f1",
+  "recall": 0.5741,
+  "precision": 0.5614,
+  "f1": 0.5605,
+  "accuracy": 0.5741
+}

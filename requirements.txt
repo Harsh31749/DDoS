@@ -5,3 +5,5 @@ seaborn>=0.13
 scikit-learn>=1.4
 ipykernel>=6.29
 jupytext>=1.16
+streamlit>=1.39
+plotly>=5.24
