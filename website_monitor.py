@@ -6,6 +6,7 @@ import time
 import os
 import warnings
 import json
+import ipaddress
 from config import BENIGN_LABEL
 
 # Suppress warnings to keep the terminal clean
@@ -13,6 +14,8 @@ warnings.filterwarnings("ignore", category=UserWarning)
 WINDOW_PACKET_COUNT = 50
 ALERT_STREAK_THRESHOLD = 3
 BENIGN_LOG_EVERY_WINDOWS = 5
+IGNORE_PRIVATE_SOURCE_IPS = True
+ATTACK_CONFIDENCE_THRESHOLD = 0.90
 
 print("=" * 60)
 print(" 🛡️ REAL-TIME DDoS WEB DEFENSE SHIELD 🛡️")
@@ -90,6 +93,12 @@ def process_packet(packet):
         return
 
     src_ip = packet[IP].src
+    if IGNORE_PRIVATE_SOURCE_IPS:
+        try:
+            if ipaddress.ip_address(src_ip).is_private:
+                return
+        except ValueError:
+            pass
     
     # Initialize a new flow if we haven't seen this IP recently
     if src_ip not in active_flows:
@@ -136,19 +145,36 @@ def process_packet(packet):
         # The AI makes its decision
         raw_prediction = model.predict(scaled_data)[0]
         prediction = _decode_prediction(raw_prediction)
+        confidence = None
+        if hasattr(model, "predict_proba"):
+            try:
+                confidence = float(np.max(model.predict_proba(scaled_data)[0]))
+            except Exception:
+                confidence = None
         
         if prediction != BENIGN_LABEL:
+            # Confidence gate: avoid escalating weak attack guesses into firewall actions.
+            if confidence is not None and confidence < ATTACK_CONFIDENCE_THRESHOLD:
+                print(
+                    f"ℹ️ Low-confidence non-benign prediction from {src_ip}: {prediction} "
+                    f"(p={confidence:.2f} < {ATTACK_CONFIDENCE_THRESHOLD:.2f})"
+                )
+                flow["attack_streak"] = 0
+                return
+
             flow["attack_streak"] += 1
             if flow["attack_streak"] >= ALERT_STREAK_THRESHOLD:
                 print(
                     f"🚨 [ATTACK DETECTED] {prediction} flood from {src_ip}! "
-                    f"(streak={flow['attack_streak']}) Triggering firewall..."
+                    f"(streak={flow['attack_streak']}"
+                    f"{f', p={confidence:.2f}' if confidence is not None else ''}) Triggering firewall..."
                 )
                 # Here is where the firewall block command would go
             else:
                 print(
                     f"⚠️ Suspicious traffic from {src_ip}: predicted {prediction} "
-                    f"(streak={flow['attack_streak']}/{ALERT_STREAK_THRESHOLD})"
+                    f"(streak={flow['attack_streak']}/{ALERT_STREAK_THRESHOLD}"
+                    f"{f', p={confidence:.2f}' if confidence is not None else ''})"
                 )
         else:
             recovered = flow["attack_streak"] > 0
