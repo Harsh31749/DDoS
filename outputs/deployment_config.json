@@ -1,0 +1,5 @@
+{
+  "selected_model": "Random Forest",
+  "model_path": "outputs\\random_forest_model.pkl",
+  "selection_metric": "recall"
+}

@@ -8,62 +8,91 @@ import pandas as pd
 from config import DATASET_NAME, LABEL_COLUMN, BENIGN_LABEL, ATTACK_CLASSES, RANDOM_SEED
 
 
-def load_dataset(paths: list, label_col: str, sample_frac: float = 1.0) -> pd.DataFrame:
+def load_dataset(paths: list, label_col: str,
+                 sample_frac: float = 1.0) -> pd.DataFrame:
     """
-    Load one or multiple CSV files and concatenate them.
+    Load CSVs and sample DURING reading — not after.
 
-    CIC-DDoS2019 ships as many CSVs (one per attack type).
-    Pass all CSV paths as a list.
+    Key fix vs the old version
+    --------------------------
+    The old approach did: read full file → then sample.
+    This crashed on 7GB because pandas loaded everything into RAM first.
+
+    The new approach does: count rows → skip rows randomly during read.
+    Only `sample_frac` fraction of each file ever enters RAM.
 
     Args:
         paths       : list of CSV file paths
         label_col   : column that carries the traffic class label
-        sample_frac : fraction to sample (useful during development)
+        sample_frac : fraction to keep per file (e.g. 0.3 = 30%)
     Returns:
-        pd.DataFrame with all rows concatenated
+        pd.DataFrame with all sampled rows concatenated
     """
     frames = []
+
     for p in paths:
-        print(f"   📂 Reading: {os.path.basename(p)}")
-        frames.append(pd.read_csv(p, low_memory=False))
+        filename = os.path.basename(p)
+        print(f"   📂 Reading: {filename}")
+
+        if sample_frac >= 1.0:
+            # Load everything — only safe if you have enough RAM
+            df_chunk = pd.read_csv(p, low_memory=False)
+        else:
+            # ── Count rows without loading data ───────────────
+            # Fast line count using file iteration
+            with open(p, "r", encoding="utf-8", errors="replace") as f:
+                total_rows = sum(1 for _ in f) - 1  # subtract header
+
+            # ── Build a skip-row index ─────────────────────────
+            # We want to KEEP sample_frac of rows, so we SKIP the rest.
+            # np.random.choice picks which rows to skip randomly.
+            keep_count = max(1, int(total_rows * sample_frac))
+            skip_count = total_rows - keep_count
+
+            rng = np.random.default_rng(RANDOM_SEED)
+            # Row indices to skip (1-based because row 0 is the header)
+            all_row_indices = np.arange(1, total_rows + 1)
+            skip_indices    = rng.choice(
+                all_row_indices, size=skip_count, replace=False
+            )
+            skip_set = set(skip_indices.tolist())
+
+            df_chunk = pd.read_csv(
+                p,
+                skiprows=lambda i: i in skip_set,
+                low_memory=False
+            )
+
+            print(f"      Sampled {len(df_chunk):,} / {total_rows:,} rows "
+                  f"({sample_frac*100:.0f}%)")
+
+        frames.append(df_chunk)
 
     df = pd.concat(frames, ignore_index=True)
 
-    # Strip leading/trailing whitespace from column names (common in CIC datasets)
+    # Strip leading/trailing whitespace from column names
+    # CIC-DDoS2019 has " Label" with a leading space
     df.columns = df.columns.str.strip()
 
-    if sample_frac < 1.0:
-        df = df.sample(frac=sample_frac, random_state=RANDOM_SEED)
-        print(f"   ⚠️  Sampled {sample_frac*100:.0f}% → {len(df):,} rows")
-    else:
-        print(f"   ✅ Loaded {len(df):,} rows × {df.shape[1]} columns")
+    print(f"\n   ✅ Total loaded: {len(df):,} rows × {df.shape[1]} columns")
 
-    if label_col not in df.columns:
+    if label_col.strip() not in df.columns:
         raise ValueError(
-            f"Label column '{label_col}' not found.\n"
+            f"Label column '{label_col}' not found after stripping whitespace.\n"
             f"Available columns: {list(df.columns[:10])} ..."
         )
 
     print("\n📊 Class distribution:")
-    print(df[label_col].value_counts().to_string())
+    print(df[label_col.strip()].value_counts().to_string())
     return df
 
 
 def generate_synthetic_dataset(n_samples: int = 50_000) -> pd.DataFrame:
     """
     Build a realistic synthetic network traffic dataset.
-
     Used when DEMO_MODE = True so the pipeline runs without real CSVs.
-    Feature distributions are loosely modelled on published CIC-DDoS2019
-    statistics. Injects ~1% NaN and ~0.5% infinity values to simulate
-    real CICFlowMeter output quality issues.
-
-    Args:
-        n_samples : number of flow records to generate
-    Returns:
-        pd.DataFrame ready for the preprocessing step
     """
-    rng = np.random.default_rng(RANDOM_SEED)
+    rng     = np.random.default_rng(RANDOM_SEED)
     classes = [BENIGN_LABEL] + ATTACK_CLASSES[DATASET_NAME][:5]
     weights = [0.45, 0.15, 0.12, 0.10, 0.10, 0.08]
 
@@ -130,8 +159,12 @@ def generate_synthetic_dataset(n_samples: int = 50_000) -> pd.DataFrame:
     df = df.mask(nan_mask)
 
     numeric_cols = df.select_dtypes(include=np.number).columns
-    inf_mask = np.random.default_rng(RANDOM_SEED + 2).random((len(df), len(numeric_cols))) < 0.005
-    df[numeric_cols] = df[numeric_cols].mask(pd.DataFrame(inf_mask, columns=numeric_cols), np.inf)
+    inf_mask     = np.random.default_rng(RANDOM_SEED + 2).random(
+        (len(df), len(numeric_cols))
+    ) < 0.005
+    df[numeric_cols] = df[numeric_cols].mask(
+        pd.DataFrame(inf_mask, columns=numeric_cols), np.inf
+    )
 
     print(f"🧪 Synthetic dataset generated: {df.shape[0]:,} rows × {df.shape[1]} cols")
     return df

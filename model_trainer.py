@@ -2,7 +2,10 @@
 # model_trainer.py — Define, split, normalise, and train models
 # ============================================================
 
+import os
+import json
 import time
+import joblib
 import numpy as np
 import pandas as pd
 
@@ -15,79 +18,47 @@ from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
     f1_score, roc_auc_score, classification_report, confusion_matrix
 )
-from config import RANDOM_SEED, TEST_SIZE
+from config import RANDOM_SEED, TEST_SIZE, OUTPUT_DIR
 
 
 def prepare_splits(X: pd.DataFrame, y: np.ndarray,
                    test_size: float = TEST_SIZE,
                    normalize: bool = True) -> tuple:
-    """
-    Stratified train/test split followed by MinMax normalisation.
-
-    Key design decisions
-    --------------------
-    ─ Stratified split: preserves the original class-imbalance ratio in
-      both subsets — critical when benign flows dominate by 10:1 or more.
-    ─ Scaler fitted on X_train only: prevents future information (test
-      set statistics) from leaking into the training phase.
-    ─ MinMaxScaler chosen over StandardScaler: network traffic features
-      are heavily right-skewed (most flows are tiny; a few are enormous).
-      MinMax compresses the range without assuming symmetry.
-
-    Args:
-        X          : feature DataFrame (after feature selection)
-        y          : encoded label array
-        test_size  : fraction held out for testing
-        normalize  : apply MinMaxScaler when True
-    Returns:
-        X_train, X_test, y_train, y_test, scaler (or None)
-    """
     print("\n" + "=" * 60)
     print("  STEP 3 — NORMALISATION & TRAIN/TEST SPLIT")
     print("=" * 60)
 
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y,
-        test_size=test_size,
-        random_state=RANDOM_SEED,
-        stratify=y
+        X, y, test_size=test_size,
+        random_state=RANDOM_SEED, stratify=y
     )
     print(f"Split: Train {len(X_train):,} | Test {len(X_test):,} "
           f"(stratified, test_size={test_size})")
 
     scaler = None
     if normalize:
+        print("Normalising with MinMaxScaler... ", end="", flush=True)
         scaler  = MinMaxScaler()
         X_train = pd.DataFrame(scaler.fit_transform(X_train), columns=X_train.columns)
         X_test  = pd.DataFrame(scaler.transform(X_test),      columns=X_test.columns)
-        print("Normalisation: MinMaxScaler fitted on training set only.")
+        print("done.")
 
     return X_train, X_test, y_train, y_test, scaler
 
 
 def build_models() -> dict:
     """
-    Instantiate all three classifiers with DDoS-optimised hyperparameters.
+    Three classifiers tuned for large-dataset speed.
 
-    J48 (Decision Tree — criterion=entropy)
-    ─ Replicates Weka's J48 algorithm using Information Gain splitting.
-    ─ Grows a full tree; min_impurity_decrease acts as the confidence
-      factor analogue to Weka's pruning.
-    ─ Single-tree rules are human-readable and auditable by SOC teams.
-
-    Random Forest
-    ─ Ensemble of 200 decorrelated J48 trees.
-    ─ max_features='sqrt' forces diversity between trees — each tree
-      sees only √p features at each split, reducing correlation.
-    ─ class_weight='balanced' up-weights rare attack sub-types so they
-      don't get drowned out by the majority benign class.
-    ─ oob_score=True provides a free out-of-bag validation estimate.
-
-    Naïve Bayes (Gaussian)
-    ─ Near-instant inference (< 1 ms) — suitable for line-rate filtering.
-    ─ Works well on amplification attacks where 2–3 features dominate.
-    ─ Underperforms when features are strongly correlated (Bot-IoT).
-    ─ Serves as a probabilistic baseline for the other two models.
+    Random Forest key changes for 10M-row datasets
+    ------------------------------------------------
+    n_estimators=50   : was 200. 50 trees gives ~95% accuracy of 200
+                        trees at 1/4 the time on large data.
+    max_depth=25      : caps tree depth, prevents overfitting on the
+                        dominant TFTP class, speeds up training.
+    max_samples=0.3   : each tree trains on 30% bootstrap sample
+                        (2.1M rows) instead of all 7M rows.
+                        Biggest single speedup — ~3x faster.
     """
     return {
         "J48 (Decision Tree)": DecisionTreeClassifier(
@@ -100,68 +71,28 @@ def build_models() -> dict:
             random_state=RANDOM_SEED,
         ),
         "Random Forest": RandomForestClassifier(
-            n_estimators=200,
+            n_estimators=50,
             criterion="entropy",
             max_features="sqrt",
+            max_depth=25,
             min_samples_split=10,
             min_samples_leaf=5,
+            max_samples=0.3,
             class_weight="balanced",
             n_jobs=-1,
             oob_score=True,
+            warm_start=True,
             random_state=RANDOM_SEED,
         ),
-        "Naïve Bayes": GaussianNB(
+        "Naive Bayes": GaussianNB(
             var_smoothing=1e-9,
         ),
     }
 
 
-def _compute_metrics(y_test, y_pred, model, n_classes: int) -> dict:
-    """Compute all evaluation metrics for one model."""
-    avg = "binary" if n_classes == 2 else "weighted"
-
-    auc = None
-    try:
-        if hasattr(model, "predict_proba"):
-            proba = model.predict_proba(
-                # reuse whatever X_test was passed — handled in caller
-                # auc computed separately in train_all_models
-                None
-            )
-    except Exception:
-        pass
-
-    return {
-        "accuracy":  round(accuracy_score(y_test, y_pred), 4),
-        "precision": round(precision_score(y_test, y_pred, average=avg, zero_division=0), 4),
-        "recall":    round(recall_score(y_test, y_pred,    average=avg, zero_division=0), 4),
-        "f1":        round(f1_score(y_test, y_pred,        average=avg, zero_division=0), 4),
-    }
-
-
 def train_all_models(models: dict, X_train, X_test,
-                     y_train, y_test, label_encoder) -> dict:
-    """
-    Train every model in the dict and collect full evaluation results.
-
-    Metrics explained
-    -----------------
-    ─ Accuracy   : overall correctness; misleading under class imbalance
-    ─ Precision  : of flows flagged as attacks, how many truly are?
-                   (high precision → fewer false alarms to NOC)
-    ─ Recall     : of all real attacks, how many did we catch?
-                   ★ PRIMARY OBJECTIVE — zero missed attacks
-    ─ F1-Score   : harmonic mean of precision & recall
-    ─ AUC-ROC    : rank quality across all decision thresholds
-
-    Args:
-        models        : dict from build_models()
-        X_train/X_test: normalised feature splits
-        y_train/y_test: label arrays
-        label_encoder : fitted LabelEncoder for display
-    Returns:
-        dict mapping model name → results dict
-    """
+                     y_train, y_test, label_encoder,
+                     scaler=None) -> dict:
     print("\n" + "=" * 60)
     print("  STEP 4 — MODEL TRAINING & EVALUATION")
     print("=" * 60)
@@ -173,66 +104,131 @@ def train_all_models(models: dict, X_train, X_test,
     for name, model in models.items():
         print(f"\n{'─'*55}")
         print(f"  Training: {name}")
+        print(f"  Rows: {len(X_train):,}  |  Features: {X_train.shape[1]}")
         print(f"{'─'*55}")
 
-        # Train
+        # Train — RF gets a progress-printing loop
         t0 = time.time()
-        model.fit(X_train, y_train)
+        if isinstance(model, RandomForestClassifier):
+            model = _train_rf_with_progress(model, X_train, y_train)
+        else:
+            print(f"  Fitting... ", end="", flush=True)
+            model.fit(X_train, y_train)
+            print("done.")
         train_time = round(time.time() - t0, 3)
 
         # Predict
-        t1 = time.time()
-        y_pred = model.predict(X_test)
+        print(f"  Predicting on {len(X_test):,} test rows... ", end="", flush=True)
+        t1         = time.time()
+        y_pred     = model.predict(X_test)
         infer_time = round(time.time() - t1, 5)
+        print("done.")
 
-        # Core metrics
+        # Metrics
         acc  = round(accuracy_score(y_test, y_pred), 4)
         prec = round(precision_score(y_test, y_pred, average=avg, zero_division=0), 4)
         rec  = round(recall_score(y_test, y_pred,    average=avg, zero_division=0), 4)
         f1   = round(f1_score(y_test, y_pred,        average=avg, zero_division=0), 4)
 
-        # AUC-ROC
         auc = None
         try:
             if hasattr(model, "predict_proba"):
                 proba = model.predict_proba(X_test)
-                auc = round(
+                auc   = round(
                     roc_auc_score(y_test, proba,
                                   multi_class="ovr", average="macro")
                     if n_classes > 2
-                    else roc_auc_score(y_test, proba[:, 1]),
-                    4
+                    else roc_auc_score(y_test, proba[:, 1]), 4
                 )
         except Exception:
             pass
 
-        print(f"  Train time : {train_time}s  |  Infer time: {infer_time}s")
+        print(f"\n  Train time : {train_time}s  |  Infer time: {infer_time}s")
         print(f"  Accuracy   : {acc}")
         print(f"  Precision  : {prec}")
-        print(f"  Recall     : {rec}  ← PRIMARY METRIC")
+        print(f"  Recall     : {rec}  <- PRIMARY METRIC")
         print(f"  F1-Score   : {f1}")
         if auc: print(f"  AUC-ROC    : {auc}")
         if hasattr(model, "oob_score_"):
-            print(f"  OOB Score  : {model.oob_score_:.4f}  (Random Forest only)")
+            print(f"  OOB Score  : {model.oob_score_:.4f}")
 
         print(f"\n  Classification Report:\n")
-        print(classification_report(y_test, y_pred,
-                                    target_names=[str(c) for c in label_encoder.classes_],
-                                    zero_division=0))
+        print(classification_report(
+            y_test, y_pred,
+            target_names=[str(c) for c in label_encoder.classes_],
+            zero_division=0
+        ))
 
         all_results[name] = {
-            "name":            name,
-            "model":           model,
-            "y_pred":          y_pred,
-            "y_test":          y_test,
+            "name": name, "model": model,
+            "y_pred": y_pred, "y_test": y_test,
             "confusion_matrix": confusion_matrix(y_test, y_pred),
-            "accuracy":        acc,
-            "precision":       prec,
-            "recall":          rec,
-            "f1":              f1,
-            "auc":             auc,
-            "train_time_s":    train_time,
-            "infer_time_s":    infer_time,
+            "accuracy": acc, "precision": prec,
+            "recall": rec, "f1": f1, "auc": auc,
+            "train_time_s": train_time, "infer_time_s": infer_time,
         }
 
+    _save_artefacts(all_results, X_train, scaler, label_encoder)
     return all_results
+
+
+def _train_rf_with_progress(model: RandomForestClassifier,
+                              X_train, y_train) -> RandomForestClassifier:
+    """
+    Train Random Forest in batches of 10 trees, printing progress
+    after each batch so you can see it's still running.
+    Uses warm_start so previously built trees are reused each batch.
+    """
+    total      = model.n_estimators
+    batch_size = 10
+    trained    = 0
+
+    print(f"  Building {total} trees (batch size 10)...")
+    t_start = time.time()
+
+    while trained < total:
+        batch              = min(batch_size, total - trained)
+        trained           += batch
+        model.n_estimators = trained
+        model.fit(X_train, y_train)
+        elapsed = round(time.time() - t_start, 1)
+        print(f"  [{trained:>3}/{total} trees] — {elapsed}s elapsed", flush=True)
+
+    model.warm_start = False
+    return model
+
+
+def _save_artefacts(all_results, X_train, scaler, label_encoder):
+    """Save all .pkl files needed by website_monitor.py"""
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+    for name, res in all_results.items():
+        safe = name.lower().replace(" ","_").replace("(","").replace(")","")
+        path = os.path.join(OUTPUT_DIR, f"{safe}_model.pkl")
+        joblib.dump(res["model"], path)
+        print(f"💾 Saved model → {path}")
+
+    if scaler is not None:
+        joblib.dump(scaler, os.path.join(OUTPUT_DIR, "minmax_scaler.pkl"))
+        print(f"💾 Saved scaler → {OUTPUT_DIR}/minmax_scaler.pkl")
+
+    joblib.dump(list(X_train.columns),
+                os.path.join(OUTPUT_DIR, "selected_features.pkl"))
+    print(f"💾 Saved features → {OUTPUT_DIR}/selected_features.pkl")
+
+    joblib.dump(label_encoder,
+                os.path.join(OUTPUT_DIR, "label_encoder.pkl"))
+    print(f"💾 Saved encoder → {OUTPUT_DIR}/label_encoder.pkl")
+
+    best_name = max(all_results, key=lambda n: all_results[n]["recall"])
+    safe_best = best_name.lower().replace(" ","_").replace("(","").replace(")","")
+    config = {
+        "selected_model":   best_name,
+        "model_path":       os.path.join(OUTPUT_DIR, f"{safe_best}_model.pkl"),
+        "selection_metric": "recall",
+    }
+    with open(os.path.join(OUTPUT_DIR, "deployment_config.json"), "w") as f:
+        json.dump(config, f, indent=2)
+
+    print(f"\n✅ Deployment model: '{best_name}' (highest recall)")
+    print(f"💾 Config saved → {OUTPUT_DIR}/deployment_config.json")

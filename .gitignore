@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+outputs/
+data/
+*.pkl
+.env
+data/

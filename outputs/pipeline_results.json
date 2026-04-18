@@ -1,0 +1,57 @@
+{
+  "dataset": "CIC-DDoS2019",
+  "models": {
+    "J48 (Decision Tree)": {
+      "name": "J48 (Decision Tree)",
+      "accuracy": 0.5566,
+      "precision": 0.5632,
+      "recall": 0.5566,
+      "f1": 0.5586,
+      "auc": 0.6797,
+      "train_time_s": 1.188,
+      "infer_time_s": 0.00223
+    },
+    "Random Forest": {
+      "name": "Random Forest",
+      "accuracy": 0.5762,
+      "precision": 0.5626,
+      "recall": 0.5762,
+      "f1": 0.5621,
+      "auc": 0.7965,
+      "train_time_s": 2.267,
+      "infer_time_s": 0.05243
+    },
+    "Naive Bayes": {
+      "name": "Naive Bayes",
+      "accuracy": 0.5797,
+      "precision": 0.558,
+      "recall": 0.5797,
+      "f1": 0.5331,
+      "auc": 0.7896,
+      "train_time_s": 0.006,
+      "infer_time_s": 0.0079
+    }
+  },
+  "top_features": {
+    "SYN Flag Count": 0.6493942561429793,
+    "Flow Bytes/s": 0.31170123158151064,
+    "Flow Duration": 0.29745250005932844,
+    "Flow Packets/s": 0.2666716315961666,
+    "Total Fwd Packets": 0.23812010609706435,
+    "Fwd Packets/s": 0.20813869110881944,
+    "Flow IAT Mean": 0.17614880645956887,
+    "Total Length of Fwd Packets": 0.16606927320991138,
+    "Total Backward Packets": 0.04799666372431011,
+    "Active Mean": 0.006469044350098763,
+    "Idle Max": 0.006141362818581797,
+    "Fwd Header Length": 0.005158220244634304,
+    "Bwd Packet Length Max": 0.00465855204811616,
+    "Total Length of Bwd Packets": 0.00434983642262976,
+    "Flow IAT Std": 0.003895500853823286,
+    "RST Flag Count": 0.003880965171763062,
+    "Min Packet Length": 0.003656169774625795,
+    "Down/Up Ratio": 0.0032725913322697586,
+    "FIN Flag Count": 0.0027129627457913585,
+    "Active Std": 0.0025171240385066795
+  }
+}

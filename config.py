@@ -6,23 +6,32 @@
 import os
 
 # ── Dataset selection ─────────────────────────────────────────
-# Options: 'CIC-DDoS2019' | 'Bot-IoT' | 'CSE-CIC-IDS2018'
 DATASET_NAME  = "CIC-DDoS2019"
-LABEL_COLUMN  = "Label"       # Column name holding class labels
-BENIGN_LABEL  = "BENIGN"      # How benign traffic is labelled in your CSV
+LABEL_COLUMN  = " Label"      # CIC-DDoS2019 has a leading space here
+BENIGN_LABEL  = "BENIGN"
 
 # ── Mode ─────────────────────────────────────────────────────
-# DEMO_MODE = True  → generates 50k synthetic rows (no CSV needed)
-# DEMO_MODE = False → reads from CSV_PATHS below
-DEMO_MODE = True
+DEMO_MODE = False             # False = use real CSVs below
 
-# ── CSV paths (used only when DEMO_MODE = False) ──────────────
+# ── CSV paths ─────────────────────────────────────────────────
 CSV_PATHS = [
-    # "data/DrDoS_DNS.csv",
-    # "data/Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv",
+    "data/DrDoS_DNS.csv",
+    "data/DrDoS_LDAP.csv",
+    "data/DrDoS_MSSQL.csv",
+    "data/DrDoS_NTP.csv",
+    "data/DrDoS_NetBIOS.csv",
+    "data/DrDoS_SNMP.csv",
+    "data/DrDoS_SSDP.csv",
+    "data/DrDoS_UDP.csv",
+    "data/Syn.csv",
+    "data/TFTP.csv",
+    "data/UDPLag.csv",
 ]
 
-# ── Attack classes per dataset ────────────────────────────────
+
+SAMPLE_FRAC = 0.2
+
+# ── Attack classes ────────────────────────────────────────────
 ATTACK_CLASSES = {
     "CIC-DDoS2019": [
         "DrDoS_DNS", "DrDoS_LDAP", "DrDoS_MSSQL",
@@ -44,10 +53,10 @@ ATTACK_CLASSES = {
 }
 
 # ── Feature selection ─────────────────────────────────────────
-TOP_K_FEATURES = 20            # Number of features to keep (InfoGain)
+TOP_K_FEATURES = 25           # Increased from 20 for real data
 
 # ── Train / test split ────────────────────────────────────────
-TEST_SIZE   = 0.30             # 70% train, 30% test
+TEST_SIZE   = 0.30
 RANDOM_SEED = 42
 
 # ── Output directory ──────────────────────────────────────────
