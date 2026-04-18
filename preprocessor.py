@@ -62,6 +62,7 @@ def preprocess_data(df: pd.DataFrame, label_col: str,
     print(f"[2] ∞ → NaN. Total NaN cells: {df.isnull().sum().sum():,}")
 
     # ── 3. Separate features and labels ──────────────────────
+    df.dropna(subset=[label_col], inplace=True) # <-- Drop missing labels
     y_raw = df[label_col].copy()
     X     = df.drop(columns=[label_col])
     print(f"[3] Features: {X.shape[1]}  |  Samples: {X.shape[0]:,}")

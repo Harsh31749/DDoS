@@ -217,7 +217,7 @@ def train_all_models(models: dict, X_train, X_test,
 
         print(f"\n  Classification Report:\n")
         print(classification_report(y_test, y_pred,
-                                    target_names=label_encoder.classes_,
+                                    target_names=[str(c) for c in label_encoder.classes_],
                                     zero_division=0))
 
         all_results[name] = {

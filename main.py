@@ -13,6 +13,8 @@ from evaluator import evaluate_all, plot_confusion_matrices, plot_metric_compari
 from exporter import export_results
 
 import pandas as pd
+import joblib
+import os
 
 
 def main():
@@ -55,6 +57,14 @@ def main():
     export_results(summary_df, cv_summary, all_results, mi_scores)
 
     print("\n✅ Pipeline complete. Check the outputs/ folder for results.")
+    print("\n💾 Saving Random Forest model for real-time deployment...")
+    joblib.dump(all_results["Random Forest"]["model"], "outputs/random_forest_model.pkl")
+    if scaler:
+        joblib.dump(scaler, "outputs/minmax_scaler.pkl")
+    
+    # Save the exact names of the top 20 features we used
+    selected_features = list(X_selected.columns)
+    joblib.dump(selected_features, "outputs/selected_features.pkl")
 
 
 if __name__ == "__main__":
