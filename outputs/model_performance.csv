@@ -1,4 +1,0 @@
-Model,Accuracy,Precision,Recall,F1-Score,AUC-ROC,Train (s),Infer (s)
-J48 (Decision Tree),0.5566,0.5632,0.5566,0.5586,0.6797,1.188,0.00223
-Random Forest,0.5762,0.5626,0.5762,0.5621,0.7965,2.267,0.05243
-Naive Bayes,0.5797,0.558,0.5797,0.5331,0.7896,0.006,0.0079

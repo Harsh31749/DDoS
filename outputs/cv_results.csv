@@ -1,4 +1,0 @@
-Model,CV F1 Mean,CV F1 Std
-J48 (Decision Tree),0.5545,0.0014
-Random Forest,0.5593,0.0018
-Naive Bayes,0.5165,0.0025
