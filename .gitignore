@@ -1,9 +1,61 @@
-# Ignore the massive raw datasets
+
 data/
 *.csv
 
-# Ignore the heavy trained models (they are too big for GitHub)
-outputs/*.pkl
 
-# Ignore the virtual environment
+
+outputs/*.pkl
+outputs/*.png
+outputs/*.json
+outputs/*.log
+
+
+
+**pycache**/
+*.py[cod]
+*.pyo
+
+
+
 venv/
+.env/
+.venv/
+
+
+
+.ipynb_checkpoints/
+
+
+
+.DS_Store
+Thumbs.db
+
+
+
+*.log
+*.tmp
+*.temp
+
+
+.vscode/
+.idea/
+
+
+
+build/
+dist/
+*.egg-info/
+
+
+
+.env
+.env.local
+
+
+
+.streamlit/
+
+
+
+*.bak
+*.swp

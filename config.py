@@ -1,17 +1,19 @@
+from __future__ import annotations
+
+from pathlib import Path
+
 # ============================================================
 # config.py — Central configuration for the DDoS pipeline
 # Edit ONLY this file to switch datasets, models, or paths.
 # ============================================================
 
-import os
-
 # ── Dataset selection ─────────────────────────────────────────
-DATASET_NAME  = "CIC-DDoS2019"
-LABEL_COLUMN  = " Label"      # CIC-DDoS2019 has a leading space here
-BENIGN_LABEL  = "BENIGN"
+DATASET_NAME = "CIC-DDoS2019"
+LABEL_COLUMN = " Label"  # CIC-DDoS2019 may include a leading-space header
+BENIGN_LABEL = "BENIGN"
 
 # ── Mode ─────────────────────────────────────────────────────
-DEMO_MODE = False             # False = use real CSVs below
+DEMO_MODE = False  # False = use real CSVs below
 
 # ── CSV paths ─────────────────────────────────────────────────
 CSV_PATHS = [
@@ -28,8 +30,7 @@ CSV_PATHS = [
     "data/UDPLag.csv",
 ]
 
-
-SAMPLE_FRAC = 0.2
+SAMPLE_FRAC = 0.10
 
 # ── Attack classes ────────────────────────────────────────────
 ATTACK_CLASSES = {
@@ -53,12 +54,11 @@ ATTACK_CLASSES = {
 }
 
 # ── Feature selection ─────────────────────────────────────────
-TOP_K_FEATURES = 25           # Increased from 20 for real data
+TOP_K_FEATURES = 25
 
 # ── Train / test split ────────────────────────────────────────
-TEST_SIZE   = 0.30
+TEST_SIZE = 0.30
 RANDOM_SEED = 42
 
 # ── Output directory ──────────────────────────────────────────
-OUTPUT_DIR = "outputs"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+OUTPUT_DIR = Path("outputs")
