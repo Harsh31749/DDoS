@@ -1,9 +1,9 @@
+# Ignore the massive raw datasets
+data/
+*.csv
+
+# Ignore the heavy trained models (they are too big for GitHub)
+outputs/*.pkl
+
+# Ignore the virtual environment
 venv/
-__pycache__/
-*.pyc
-*.pyo
-outputs/
-data/
-*.pkl
-.env
-data/
