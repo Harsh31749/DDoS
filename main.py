@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import traceback
+import argparse
 
 from config import (
     DATASET_NAME,
@@ -13,6 +14,7 @@ from config import (
     TOP_K_FEATURES,
     TEST_SIZE,
 )
+
 from data_loader import load_dataset, generate_synthetic_dataset
 from preprocessor import preprocess_data
 from feature_selector import select_features
@@ -21,15 +23,39 @@ from evaluator import evaluate_all, plot_confusion_matrices, plot_metric_compari
 from exporter import export_results
 
 
+# 🔥 NEW: control execution mode
+MODE = "train"   # "train" or "skip"
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="DDoS model training pipeline")
+    parser.add_argument("--mode", choices=["train", "skip"], default=MODE)
+    return parser.parse_args()
+
+
 def main() -> int:
+    args = parse_args()
     start = time.time()
 
     print("=" * 60)
     print("  DDoS ATTACK DETECTION — ML PIPELINE")
     print(f"  Dataset : {DATASET_NAME}")
+    print(f"  Mode    : {args.mode}")
     print("=" * 60)
 
     try:
+        # --------------------------------------------------
+        # 🔥 SKIP TRAINING MODE (for realtime systems)
+        # --------------------------------------------------
+        if args.mode == "skip":
+            print("\n⚡ Skipping training — using existing saved model.")
+            print("👉 Ensure outputs/best_model.pkl exists.")
+            return 0
+
+        # --------------------------------------------------
+        # NORMAL TRAINING PIPELINE
+        # --------------------------------------------------
+
         # 1. Load data
         if DEMO_MODE:
             print("\n[1/7] Generating synthetic dataset...")
@@ -40,7 +66,7 @@ def main() -> int:
 
         # 2. Preprocess
         print("[2/7] Preprocessing...")
-        X_clean, y_encoded, feature_names, label_encoder = preprocess_data(
+        X_clean, y_encoded, feature_names, label_encoder, imputer, preprocess_report = preprocess_data(
             df_raw, LABEL_COLUMN.strip(), BENIGN_LABEL
         )
 
@@ -67,6 +93,8 @@ def main() -> int:
             y_test=y_test,
             label_encoder=label_encoder,
             scaler=scaler,
+            imputer=imputer,
+            preprocess_report=preprocess_report,
         )
 
         # 6. Visualize results

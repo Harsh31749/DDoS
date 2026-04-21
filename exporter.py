@@ -53,11 +53,18 @@ def export_results(
     # Strip non-serializable heavy objects before JSON dump
     serializable_models = {}
     for name, res in all_results.items():
+        class_report = res.get("classification_report", {})
+        class_metrics = {
+            cls: vals
+            for cls, vals in class_report.items()
+            if isinstance(vals, dict) and "precision" in vals and "recall" in vals
+        }
         serializable_models[name] = {
             k: v
             for k, v in res.items()
             if k not in ("model", "y_pred", "y_test", "confusion_matrix")
         }
+        serializable_models[name]["per_class_metrics"] = class_metrics
 
     payload = {
         "dataset": DATASET_NAME,

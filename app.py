@@ -3,18 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+import time
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
-
-try:
-    from streamlit_autorefresh import st_autorefresh
-except Exception:
-    st_autorefresh = None
+from streamlit_autorefresh import st_autorefresh
 
 # ============================================================
-# PAGE CONFIGURATION
+# PAGE CONFIGURATION (MUST BE FIRST STREAMLIT CALL)
 # ============================================================
 st.set_page_config(
     page_title="DDoS AI Defense Dashboard",
@@ -32,6 +29,7 @@ FEATURE_PNG = OUTPUT_DIR / "feature_importance.png"
 CONFUSION_PNG = OUTPUT_DIR / "confusion_matrices.png"
 METRIC_PNG = OUTPUT_DIR / "metric_comparison.png"
 ALERT_FILE = OUTPUT_DIR / "live_alerts.json"
+HEALTH_FILE = OUTPUT_DIR / "live_metrics.json"
 
 # ============================================================
 # DATA LOADERS
@@ -39,6 +37,7 @@ ALERT_FILE = OUTPUT_DIR / "live_alerts.json"
 @st.cache_data
 def load_performance() -> pd.DataFrame | None:
     if not MODEL_CSV.exists():
+        st.error(f"File {MODEL_CSV} does not exist.")
         return None
     try:
         return pd.read_csv(MODEL_CSV, index_col=0)
@@ -46,68 +45,50 @@ def load_performance() -> pd.DataFrame | None:
         st.error(f"Failed to read {MODEL_CSV.name}: {exc}")
         return None
 
-
 @st.cache_data
 def load_cv() -> pd.DataFrame | None:
     if not CV_CSV.exists():
+        st.warning(f"File {CV_CSV} does not exist.")
         return None
     try:
         return pd.read_csv(CV_CSV, index_col=0)
     except Exception as exc:
-        st.warning(f"Failed to read {CV_CSV.name}: {exc}")
+        st.error(f"Failed to read {CV_CSV.name}: {exc}")
         return None
-
 
 @st.cache_data
 def load_payload() -> dict[str, Any] | None:
     if not JSON_FILE.exists():
+        st.warning(f"File {JSON_FILE} does not exist.")
         return None
     try:
         with JSON_FILE.open("r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as exc:
-        st.warning(f"Failed to read {JSON_FILE.name}: {exc}")
+        st.error(f"Failed to read {JSON_FILE.name}: {exc}")
         return None
 
-
-@st.cache_data
 def load_alerts() -> list[dict[str, Any]]:
     if not ALERT_FILE.exists():
+        st.warning(f"File {ALERT_FILE} does not exist.")
         return []
+
+def load_health() -> dict[str, Any]:
+    if not HEALTH_FILE.exists():
+        return {}
+    try:
+        with HEALTH_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
     try:
         with ALERT_FILE.open("r", encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, list) else []
     except Exception as exc:
-        st.warning(f"Failed to read {ALERT_FILE.name}: {exc}")
+        st.error(f"Failed to read {ALERT_FILE.name}: {exc}")
         return []
-
-
-# ============================================================
-# CUSTOM STYLING (Dark Theme Accents)
-# ============================================================
-st.markdown(
-    """
-    <style>
-        .block-container {padding-top: 1.5rem;}
-        .section-title {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: #60a5fa;
-            margin-bottom: 1rem;
-            border-left: 5px solid #60a5fa;
-            padding-left: 10px;
-        }
-        .stMetric {
-            background-color: #1e293b;
-            padding: 15px;
-            border-radius: 10px;
-            border: 1px solid #334155;
-        }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
 
 # ============================================================
 # MAIN HEADER
@@ -124,8 +105,7 @@ payload = load_payload()
 # ============================================================
 with st.sidebar:
     st.header("⚙️ System Status")
-    auto_refresh = st.toggle("🔁 Auto Refresh", value=True)
-    refresh_sec = st.slider("Refresh every (sec)", 2, 60, 5)
+    refresh_sec = st.slider("Refresh every (sec)", 2, 60, value=5)
 
     st.markdown("---")
     st.subheader("📁 Pipeline Output Files")
@@ -133,16 +113,11 @@ with st.sidebar:
         status = "✅" if p.exists() else "❌"
         st.write(f"{status} `{p.name}`")
 
-    st.markdown("---")
     if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.rerun()
 
-if auto_refresh:
-    if st_autorefresh is None:
-        st.info("Install `streamlit-autorefresh` to enable timer-based auto refresh.")
-    else:
-        st_autorefresh(interval=refresh_sec * 1000, key="dashboard_refresh")
+st_autorefresh(interval=refresh_sec * 1000, key="dashboard_refresh")
 
 # Stop if no data found
 if perf_df is None or perf_df.empty:
@@ -306,12 +281,30 @@ st.caption("🛡️ DDoS AI Shield Dashboard")
 # ============================================================
 # SECTION 4: LIVE ALERT FEED
 # ============================================================
+st.markdown("### 🟢 System Status")
+
+if ALERT_FILE.exists():
+    st.success("🛡️ Monitoring Active (Realtime Detection Running)")
+else:
+    st.warning("⚠️ Waiting for detection system...")
 st.markdown("<div class='section-title'>🚨 Real-Time Security Events</div>", unsafe_allow_html=True)
 
 alerts = load_alerts()
+health = load_health()
 
 if alerts:
     alert_df = pd.DataFrame(alerts)
+    if "ip" in alert_df.columns:
+        ip_options = ["All"] + sorted(alert_df["ip"].dropna().astype(str).unique().tolist())
+        selected_ip = st.selectbox("Filter by source IP", ip_options, index=0)
+        if selected_ip != "All":
+            alert_df = alert_df[alert_df["ip"].astype(str) == selected_ip]
+
+    if "status" in alert_df.columns:
+        status_options = ["All"] + sorted(alert_df["status"].dropna().astype(str).unique().tolist())
+        selected_status = st.selectbox("Filter by status", status_options, index=0)
+        if selected_status != "All":
+            alert_df = alert_df[alert_df["status"].astype(str) == selected_status]
 
     def color_status(val: Any) -> str:
         text = str(val)
@@ -325,6 +318,9 @@ if alerts:
         except AttributeError:
             styled = styled.applymap(color_status, subset=["status"])
         st.table(styled)
+    if alerts:
+        latest = alerts[0]
+        st.error(f"🚨 Latest Attack → IP: {latest.get('ip', 'N/A')} | Time: {latest.get('time', 'N/A')}")    
     else:
         st.table(alert_df)
 
@@ -336,8 +332,29 @@ if alerts:
             st.rerun()
         except Exception as exc:
             st.error(f"Could not clear alert file: {exc}")
+
+    if "ip" in alert_df.columns and not alert_df.empty:
+        st.markdown("#### Top Source IPs")
+        top_ips = (
+            alert_df["ip"]
+            .astype(str)
+            .value_counts()
+            .reset_index()
+            .rename(columns={"index": "IP", "ip": "Alerts"})
+            .head(10)
+        )
+        fig_ips = px.bar(top_ips, x="IP", y="Alerts", color="Alerts", color_continuous_scale="Reds")
+        st.plotly_chart(fig_ips, use_container_width=True)
 else:
     if ALERT_FILE.exists():
         st.success("✅ System Secure: No active threats detected in the last window.")
     else:
         st.info("System is monitoring network traffic... Alerts will appear here in real-time.")
+
+if health:
+    st.markdown("### 🩺 Runtime Health")
+    h1, h2, h3, h4 = st.columns(4)
+    h1.metric("Predictions / min", health.get("predictions_per_min", "N/A"))
+    h2.metric("Alerts / min", health.get("alerts_per_min", "N/A"))
+    h3.metric("Tracked Flows", health.get("flows_tracked", "N/A"))
+    h4.metric("Error Count", health.get("error_count", "N/A"))

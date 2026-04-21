@@ -5,12 +5,15 @@ from __future__ import annotations
 # Optimized for large datasets (millions of rows)
 # ============================================================
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from sklearn.impute import SimpleImputer
 from sklearn.preprocessing import LabelEncoder
 
-from config import RANDOM_SEED
+from config import OUTPUT_DIR, RANDOM_SEED
 
 _ID_COLUMNS = [
     "Flow ID", "Source IP", "Source Port",
@@ -44,6 +47,7 @@ def preprocess_data(df: pd.DataFrame, label_col: str, benign_label: str) -> tupl
 
     df = df.copy()
     original_shape = df.shape
+    validation = _validate_dataset(df, label_col)
 
     # Normalize incoming label column target
     label_col = label_col.strip()
@@ -138,8 +142,19 @@ def preprocess_data(df: pd.DataFrame, label_col: str, benign_label: str) -> tupl
     # reset aligned index
     X_filled.reset_index(drop=True, inplace=True)
 
+    report = {
+        "original_shape": list(original_shape),
+        "final_shape": [int(X_filled.shape[0]), int(X_filled.shape[1])],
+        "identifier_columns_dropped": existing_drops,
+        "constant_columns_removed": const_cols,
+        "duplicate_columns_removed": dup_cols,
+        "validation": validation,
+        "class_distribution_after_cleaning": y_raw.value_counts(dropna=False).to_dict(),
+    }
+    _save_preprocess_report(report)
+
     print(f"\n✅ Preprocessing done: {original_shape} → {X_filled.shape}")
-    return X_filled, y_encoded, list(X_filled.columns), le
+    return X_filled, y_encoded, list(X_filled.columns), le, imputer, report
 
 
 def _find_duplicate_columns_fast(df: pd.DataFrame) -> list[str]:
@@ -160,3 +175,31 @@ def _find_duplicate_columns_fast(df: pd.DataFrame) -> list[str]:
             col_hashes[col_hash] = col
 
     return to_drop
+
+
+def _validate_dataset(df: pd.DataFrame, label_col: str) -> dict:
+    clean_label_col = label_col.strip()
+    cols = [c.strip() for c in df.columns]
+    null_ratio = float(df.isna().sum().sum()) / float(max(df.size, 1))
+    duplicated_ratio = float(df.duplicated().sum()) / float(max(len(df), 1))
+    classes = {}
+    if clean_label_col in cols:
+        aligned = df.copy()
+        aligned.columns = cols
+        classes = aligned[clean_label_col].value_counts(dropna=False).to_dict()
+
+    return {
+        "required_label_present": clean_label_col in cols,
+        "row_count": int(df.shape[0]),
+        "column_count": int(df.shape[1]),
+        "global_null_ratio": round(null_ratio, 6),
+        "duplicate_row_ratio": round(duplicated_ratio, 6),
+        "raw_class_distribution": classes,
+    }
+
+
+def _save_preprocess_report(report: dict) -> None:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    path = Path(OUTPUT_DIR) / "preprocess_report.json"
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(report, f, indent=2, default=str)

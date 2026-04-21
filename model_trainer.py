@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 import joblib
@@ -26,7 +27,8 @@ from sklearn.naive_bayes import GaussianNB
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.tree import DecisionTreeClassifier
 
-from config import OUTPUT_DIR, RANDOM_SEED, TEST_SIZE
+from config import OUTPUT_DIR, PRECISION_WEIGHT, RANDOM_SEED, RECALL_WEIGHT, TEST_SIZE
+from inference_contract import BUNDLE_SCHEMA_VERSION
 
 
 def prepare_splits(
@@ -112,6 +114,8 @@ def train_all_models(
     y_test: np.ndarray,
     label_encoder,
     scaler: MinMaxScaler | None = None,
+    imputer=None,
+    preprocess_report: dict[str, Any] | None = None,
 ) -> dict[str, dict[str, Any]]:
     print("\n" + "=" * 60)
     print("  STEP 4 — MODEL TRAINING & EVALUATION")
@@ -197,9 +201,23 @@ def train_all_models(
             "auc": auc,
             "train_time_s": train_time,
             "infer_time_s": infer_time,
+            "classification_report": classification_report(
+                y_test,
+                y_pred,
+                target_names=[str(c) for c in label_encoder.classes_],
+                output_dict=True,
+                zero_division=0,
+            ),
         }
 
-    _save_artefacts(all_results, X_train, scaler, label_encoder)
+    _save_artefacts(
+        all_results=all_results,
+        X_train=X_train,
+        scaler=scaler,
+        label_encoder=label_encoder,
+        imputer=imputer,
+        preprocess_report=preprocess_report or {},
+    )
     return all_results
 
 
@@ -246,16 +264,24 @@ def _save_artefacts(
     X_train: pd.DataFrame,
     scaler: MinMaxScaler | None,
     label_encoder,
+    imputer,
+    preprocess_report: dict[str, Any],
 ) -> None:
-    """Save all .pkl files needed by website_monitor.py."""
+    """Save all .pkl files needed by deployment + realtime system."""
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    # --------------------------------------------------
+    # Save all individual models (existing behavior)
+    # --------------------------------------------------
     for name, res in all_results.items():
         safe = _safe_name(name)
         path = OUTPUT_DIR / f"{safe}_model.pkl"
         joblib.dump(res["model"], path)
         print(f"💾 Saved model → {path}")
 
+    # --------------------------------------------------
+    # Save preprocessing artefacts
+    # --------------------------------------------------
     if scaler is not None:
         scaler_path = OUTPUT_DIR / "minmax_scaler.pkl"
         joblib.dump(scaler, scaler_path)
@@ -269,17 +295,61 @@ def _save_artefacts(
     joblib.dump(label_encoder, encoder_path)
     print(f"💾 Saved encoder → {encoder_path}")
 
-    best_name = max(all_results, key=lambda n: all_results[n]["recall"])
+    if imputer is not None:
+        imputer_path = OUTPUT_DIR / "median_imputer.pkl"
+        joblib.dump(imputer, imputer_path)
+        print(f"💾 Saved imputer → {imputer_path}")
+
+    # --------------------------------------------------
+    # 🔥 NEW: Save BEST MODEL separately for realtime use
+    # --------------------------------------------------
+    best_name = max(
+        all_results,
+        key=lambda n: (all_results[n]["recall"] * RECALL_WEIGHT) + (all_results[n]["precision"] * PRECISION_WEIGHT),
+    )
+    best_model = all_results[best_name]["model"]
+
+    best_model_path = OUTPUT_DIR / "best_model.pkl"
+    joblib.dump(best_model, best_model_path)
+
+    print(f"\n🔥 Best model saved → {best_model_path}")
+
+    # --------------------------------------------------
+    # 🔥 NEW: Save FULL inference bundle (VERY IMPORTANT)
+    # --------------------------------------------------
+    bundle = {
+        "schema_version": BUNDLE_SCHEMA_VERSION,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "model": best_model,
+        "scaler": scaler,
+        "imputer": imputer,
+        "features": list(X_train.columns),
+        "label_encoder": label_encoder,
+        "model_name": best_name,
+        "selection_metric": f"{RECALL_WEIGHT}*recall + {PRECISION_WEIGHT}*precision",
+        "preprocess_report": preprocess_report,
+    }
+
+    bundle_path = OUTPUT_DIR / "inference_bundle.pkl"
+    joblib.dump(bundle, bundle_path)
+
+    print(f"🔥 Inference bundle saved → {bundle_path}")
+
+    # --------------------------------------------------
+    # Save deployment config (existing)
+    # --------------------------------------------------
     safe_best = _safe_name(best_name)
     config = {
         "selected_model": best_name,
-        "model_path": str(OUTPUT_DIR / f"{safe_best}_model.pkl"),
-        "selection_metric": "recall",
+        "model_path": str(best_model_path),
+        "bundle_path": str(bundle_path),
+        "selection_metric": f"{RECALL_WEIGHT}*recall + {PRECISION_WEIGHT}*precision",
+        "bundle_schema_version": BUNDLE_SCHEMA_VERSION,
     }
 
     deploy_cfg = OUTPUT_DIR / "deployment_config.json"
     with deploy_cfg.open("w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
 
-    print(f"\n✅ Deployment model: '{best_name}' (highest recall)")
+    print(f"\n✅ Deployment model: '{best_name}' (weighted objective)")
     print(f"💾 Config saved → {deploy_cfg}")
