@@ -1,6 +1,7 @@
-import pandas as pd
-import time
 import requests
+import time
+
+import pandas as pd
 
 # We will read 50 rows of actual SYN flood data from your training set
 CSV_FILE = "data/Syn.csv" 
@@ -23,7 +24,15 @@ try:
     try:
         # We will send this data to the hidden "test" endpoint in your monitor
         for index, row in df.iterrows():
-            payload = row.to_dict()
+            # Every 5th request sends a near-zero payload so dashboard can surface NORMAL events too.
+            if index % 5 == 0:
+                payload = {}  # benign
+            else:
+                payload = {
+                    "packet_count": 20000,
+                    "total_bytes": 20000000,
+                    "syn_count": 19500
+                }
             try:
                 # Send the raw mathematical features directly to the monitor
                 requests.post("http://127.0.0.1:9999/inject_attack", json=payload, timeout=0.1)

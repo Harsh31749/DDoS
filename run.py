@@ -6,37 +6,34 @@ import time
 from pathlib import Path
 
 
-def main() -> int:
-    print("=" * 60)
-    print("  DDoS DETECTION — AUTO LAUNCHER")
-    print("=" * 60)
-
-    if not Path("main.py").exists():
-        print("❌ main.py not found in current directory.")
-        return 1
-    if not Path("app.py").exists():
-        print("❌ app.py not found in current directory.")
-        return 1
-
-    # Step 1: Run ML pipeline
-    print("\n🚀 Step 1: Running ML pipeline (main.py)...")
+def run_training():
+    print("\n🚀 Running ML pipeline (training)...")
     print("─" * 60)
 
     result = subprocess.run([sys.executable, "main.py"], check=False)
+
     if result.returncode != 0:
-        print("\n❌ Pipeline failed. Fix errors above before launching dashboard.")
-        return result.returncode
+        print("\n❌ Training failed.")
+        return False
 
-    print("\n✅ Pipeline complete! Output files saved to outputs/")
+    print("\n✅ Training complete!")
+    return True
 
-    # Step 2: brief delay
-    print("\n⏳ Waiting for output files to settle...")
-    time.sleep(1)
 
-    # Step 3: Launch Streamlit
-    print("\n🌐 Step 2: Launching Streamlit dashboard (app.py)...")
+def run_realtime():
+    print("\n🛡️ Starting real-time detection...")
     print("─" * 60)
-    print("   Dashboard URL: http://localhost:8501")
+
+    try:
+        subprocess.run([sys.executable, "website_monitor.py"], check=False)
+    except KeyboardInterrupt:
+        print("\n👋 Real-time detection stopped.")
+
+
+def run_dashboard():
+    print("\n🌐 Launching Streamlit dashboard...")
+    print("─" * 60)
+    print("   URL: http://localhost:8501")
     print("   Press Ctrl+C to stop.\n")
 
     try:
@@ -54,7 +51,65 @@ def main() -> int:
         )
     except KeyboardInterrupt:
         print("\n👋 Dashboard stopped.")
-        return 0
+
+
+def main() -> int:
+    print("=" * 60)
+    print("  DDoS DETECTION — CONTROL PANEL")
+    print("=" * 60)
+
+    print("\nSelect mode:")
+    print("1 → Train model")
+    print("2 → Real-time detection")
+    print("3 → Dashboard only")
+    print("4 → Train + Dashboard")
+    print("5 → Real-time + Dashboard")
+
+    choice = input("\nEnter choice (1-5): ").strip()
+
+    # --------------------------------------------------
+    # MODE 1 — TRAIN ONLY
+    # --------------------------------------------------
+    if choice == "1":
+        run_training()
+
+    # --------------------------------------------------
+    # MODE 2 — REALTIME ONLY
+    # --------------------------------------------------
+    elif choice == "2":
+        run_realtime()
+
+    # --------------------------------------------------
+    # MODE 3 — DASHBOARD ONLY
+    # --------------------------------------------------
+    elif choice == "3":
+        run_dashboard()
+
+    # --------------------------------------------------
+    # MODE 4 — TRAIN + DASHBOARD
+    # --------------------------------------------------
+    elif choice == "4":
+        if run_training():
+            time.sleep(1)
+            run_dashboard()
+
+    # --------------------------------------------------
+    # MODE 5 — REALTIME + DASHBOARD
+    # --------------------------------------------------
+    elif choice == "5":
+        print("\n⚡ Starting real-time detection + dashboard...")
+
+        import threading
+
+        t1 = threading.Thread(target=run_realtime, daemon=True)
+        t1.start()
+
+        time.sleep(2)
+        run_dashboard()
+
+    else:
+        print("❌ Invalid choice.")
+        return 1
 
     return 0
 

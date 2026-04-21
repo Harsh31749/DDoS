@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import socket
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 import time
@@ -19,9 +22,20 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+st.markdown("""
+<style>
+thead tr th {
+    text-align: center !important;
+}
+tbody tr td {
+    text-align: center !important;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # File Paths
-OUTPUT_DIR = Path("outputs")
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_DIR = BASE_DIR / "outputs"
 MODEL_CSV = OUTPUT_DIR / "model_performance.csv"
 CV_CSV = OUTPUT_DIR / "cv_results.csv"
 JSON_FILE = OUTPUT_DIR / "pipeline_results.json"
@@ -70,7 +84,15 @@ def load_payload() -> dict[str, Any] | None:
 
 def load_alerts() -> list[dict[str, Any]]:
     if not ALERT_FILE.exists():
-        st.warning(f"File {ALERT_FILE} does not exist.")
+        return []
+    try:
+        with ALERT_FILE.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        if not isinstance(data, list):
+            return []
+        return data[:25]
+    except Exception as exc:
+        st.error(f"Failed to read {ALERT_FILE.name}: {exc}")
         return []
 
 def load_health() -> dict[str, Any]:
@@ -82,19 +104,48 @@ def load_health() -> dict[str, Any]:
         return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+
+
+def is_demo_server_running(host: str = "127.0.0.1", port: int = 9999, timeout: float = 0.5) -> bool:
     try:
-        with ALERT_FILE.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, list) else []
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def ensure_realtime_monitor_running() -> None:
+    if ALERT_FILE.exists():
+        return
+
+    now = time.time()
+    last_try = float(st.session_state.get("monitor_last_start_try", 0.0))
+    # Prevent duplicate monitor launches during Streamlit reruns.
+    if now - last_try < 10:
+        return
+
+    st.session_state["monitor_last_start_try"] = now
+    monitor_script = Path(__file__).resolve().parent / "website_monitor.py"
+    if not monitor_script.exists():
+        st.error("Realtime monitor script `website_monitor.py` not found.")
+        return
+
+    try:
+        kwargs: dict[str, Any] = {"cwd": str(monitor_script.parent)}
+        create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        if create_no_window:
+            kwargs["creationflags"] = create_no_window
+        subprocess.Popen([sys.executable, str(monitor_script)], **kwargs)
+        st.info("Starting realtime monitor in background...")
     except Exception as exc:
-        st.error(f"Failed to read {ALERT_FILE.name}: {exc}")
-        return []
+        st.error(f"Could not start realtime monitor: {exc}")
 
 # ============================================================
 # MAIN HEADER
 # ============================================================
 st.title("🛡️ DDoS Attack Detection Dashboard")
-st.caption("ITM601 Project: Interactive Evaluation of Machine Learning Models for Network Security")
+st.caption("Interactive Evaluation of Machine Learning Models for Network Security")
+ensure_realtime_monitor_running()
 
 perf_df = load_performance()
 cv_df = load_cv()
@@ -109,13 +160,36 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("📁 Pipeline Output Files")
-    for p in [MODEL_CSV, CV_CSV, JSON_FILE, FEATURE_PNG, CONFUSION_PNG, METRIC_PNG, ALERT_FILE]:
+    for p in [MODEL_CSV, CV_CSV, JSON_FILE, FEATURE_PNG, CONFUSION_PNG, METRIC_PNG]:
         status = "✅" if p.exists() else "❌"
         st.write(f"{status} `{p.name}`")
+    alert_status = "✅" if ALERT_FILE.exists() else "➖"
+    st.write(f"{alert_status} `{ALERT_FILE.name}`")
 
     if st.button("🔄 Refresh Data"):
         st.cache_data.clear()
         st.rerun()
+
+    st.markdown("---")
+    st.subheader("🧪 Demo Controls")
+    if st.button("▶ Run Demo Replay Attack"):
+        demo_script = Path(__file__).resolve().parent / "demo_replay_attack.py"
+        if not demo_script.exists():
+            st.error(f"Script not found: {demo_script.name}")
+        elif not is_demo_server_running():
+            st.warning("Realtime detector is not running. Start mode 2 or 5 in `run.py`, then retry demo replay.")
+        else:
+            try:
+                # Run in background so Streamlit UI remains responsive.
+                kwargs: dict[str, Any] = {"cwd": str(demo_script.parent)}
+                create_no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                if create_no_window:
+                    kwargs["creationflags"] = create_no_window
+                subprocess.Popen([sys.executable, str(demo_script)], **kwargs)
+                st.success("Demo replay attack started.")
+                st.session_state["show_live_monitoring"] = True
+            except Exception as exc:
+                st.error(f"Could not start demo replay: {exc}")
 
 st_autorefresh(interval=refresh_sec * 1000, key="dashboard_refresh")
 
@@ -281,77 +355,83 @@ st.caption("🛡️ DDoS AI Shield Dashboard")
 # ============================================================
 # SECTION 4: LIVE ALERT FEED
 # ============================================================
-st.markdown("### 🟢 System Status")
-
-if ALERT_FILE.exists():
-    st.success("🛡️ Monitoring Active (Realtime Detection Running)")
-else:
-    st.warning("⚠️ Waiting for detection system...")
-st.markdown("<div class='section-title'>🚨 Real-Time Security Events</div>", unsafe_allow_html=True)
-
 alerts = load_alerts()
 health = load_health()
+realtime_available = ALERT_FILE.exists() or bool(health)
+show_live_monitoring = True
 
-if alerts:
-    alert_df = pd.DataFrame(alerts)
-    if "ip" in alert_df.columns:
-        ip_options = ["All"] + sorted(alert_df["ip"].dropna().astype(str).unique().tolist())
-        selected_ip = st.selectbox("Filter by source IP", ip_options, index=0)
-        if selected_ip != "All":
-            alert_df = alert_df[alert_df["ip"].astype(str) == selected_ip]
-
-    if "status" in alert_df.columns:
-        status_options = ["All"] + sorted(alert_df["status"].dropna().astype(str).unique().tolist())
-        selected_status = st.selectbox("Filter by status", status_options, index=0)
-        if selected_status != "All":
-            alert_df = alert_df[alert_df["status"].astype(str) == selected_status]
-
-    def color_status(val: Any) -> str:
-        text = str(val)
-        color = "#ef4444" if "🚨" in text else "#10b981"
-        return f"color: {color}; font-weight: bold"
-
-    if "status" in alert_df.columns:
-        styled = alert_df.style
-        try:
-            styled = styled.map(color_status, subset=["status"])
-        except AttributeError:
-            styled = styled.applymap(color_status, subset=["status"])
-        st.table(styled)
-    if alerts:
-        latest = alerts[0]
-        st.error(f"🚨 Latest Attack → IP: {latest.get('ip', 'N/A')} | Time: {latest.get('time', 'N/A')}")    
+if show_live_monitoring:
+    st.markdown("### 🟢 System Status")
+    if realtime_available:
+        st.success("🛡️ Monitoring Active (Realtime Data Available)")
+        st.markdown("<div class='section-title'>🚨 Real-Time Security Events</div>", unsafe_allow_html=True)
     else:
-        st.table(alert_df)
+        st.info("Realtime detector is not running yet. Start mode 2 or 5 from `run.py`.")
 
-    if st.button("🗑️ Clear Alert History"):
-        try:
-            if ALERT_FILE.exists():
-                ALERT_FILE.unlink()
-            st.cache_data.clear()
-            st.rerun()
-        except Exception as exc:
-            st.error(f"Could not clear alert file: {exc}")
+    if realtime_available and alerts:
+        alert_df = pd.DataFrame(alerts)
+        if "ip" in alert_df.columns:
+            ip_options = ["All"] + sorted(alert_df["ip"].dropna().astype(str).unique().tolist())
+            selected_ip = st.selectbox("Filter by source IP", ip_options, index=0)
+            if selected_ip != "All":
+                alert_df = alert_df[alert_df["ip"].astype(str) == selected_ip]
 
-    if "ip" in alert_df.columns and not alert_df.empty:
-        st.markdown("#### Top Source IPs")
-        top_ips = (
-            alert_df["ip"]
-            .astype(str)
-            .value_counts()
-            .reset_index()
-            .rename(columns={"index": "IP", "ip": "Alerts"})
-            .head(10)
-        )
-        fig_ips = px.bar(top_ips, x="IP", y="Alerts", color="Alerts", color_continuous_scale="Reds")
-        st.plotly_chart(fig_ips, use_container_width=True)
-else:
-    if ALERT_FILE.exists():
-        st.success("✅ System Secure: No active threats detected in the last window.")
-    else:
-        st.info("System is monitoring network traffic... Alerts will appear here in real-time.")
+        if "attack" in alert_df.columns:
+            attack_options = ["All"] + sorted(alert_df["attack"].dropna().astype(str).unique().tolist())
+            selected_attack = st.selectbox("Filter by attack type", attack_options, index=0)
+            if selected_attack != "All":
+                alert_df = alert_df[alert_df["attack"].astype(str) == selected_attack]
 
-if health:
+        def color_status(val: Any) -> str:
+            text = str(val).upper()
+            color = "#ef4444" if text == "ATTACK" else "#10b981"
+            return f"color: {color}; font-weight: bold"
+
+        if "status" in alert_df.columns:
+            styled = alert_df.style
+            try:
+                styled = styled.map(color_status, subset=["status"])
+            except AttributeError:
+                styled = styled.applymap(color_status, subset=["status"])
+            styled = styled.set_properties(**{"text-align": "center"})
+            styled = styled.set_table_styles(
+                [
+                    {"selector": "th", "props": [("text-align", "center")]},
+                    {"selector": "td", "props": [("text-align", "center")]},
+                ]
+            )
+            st.dataframe(styled, use_container_width=True)
+        if alerts:
+            latest = alerts[0]
+            latest_status = str(latest.get("status", "ATTACK")).upper()
+            if latest_status == "ATTACK":
+                st.error(f"🚨 Latest Event → IP: {latest.get('ip', 'N/A')} | Time: {latest.get('time', 'N/A')}")
+            else:
+                st.success(f"✅ Latest Event → IP: {latest.get('ip', 'N/A')} | Time: {latest.get('time', 'N/A')}")
+        else:
+            st.table(alert_df)
+
+        if st.button("🗑️ Clear Alert History"):
+            try:
+                if ALERT_FILE.exists():
+                    ALERT_FILE.unlink()
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Could not clear alert file: {exc}")
+
+        if "ip" in alert_df.columns and not alert_df.empty:
+            st.markdown("#### Top Source IPs")
+            ip_counts = alert_df["ip"].astype(str).value_counts().head(10)
+            top_ips = pd.DataFrame({"IP": ip_counts.index, "Alerts": ip_counts.values})
+            fig_ips = px.bar(top_ips, x="IP", y="Alerts", color="Alerts", color_continuous_scale="Reds")
+            st.plotly_chart(fig_ips, use_container_width=True)
+    elif realtime_available:
+        if ALERT_FILE.exists():
+            st.success("✅ System Secure: No active threats detected in the last window.")
+        else:
+            st.success("✅ No active alerts in the current window.")
+if show_live_monitoring and health:
     st.markdown("### 🩺 Runtime Health")
     h1, h2, h3, h4 = st.columns(4)
     h1.metric("Predictions / min", health.get("predictions_per_min", "N/A"))

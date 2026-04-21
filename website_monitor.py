@@ -7,6 +7,7 @@ import threading
 import time
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -34,8 +35,11 @@ SNIFF_FILTER = "tcp and (port 80 or port 443)"
 ENABLE_DEMO_SERVER = True
 DEMO_TOKEN = os.getenv("DDoS_DEMO_TOKEN", "")
 
-LOG_FILE = "outputs/live_alerts.json"
-HEALTH_FILE = "outputs/live_metrics.json"
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUTS_DIR = BASE_DIR / "outputs"
+LOG_FILE = OUTPUTS_DIR / "live_alerts.json"
+HEALTH_FILE = OUTPUTS_DIR / "live_metrics.json"
+MAX_LIVE_ROWS = 25
 
 active_flows: dict[str, dict[str, Any]] = {}
 last_alert_time: dict[str, float] = {}
@@ -60,6 +64,7 @@ selected_features = bundle["features"]
 label_encoder = bundle.get("label_encoder")
 model_name = bundle.get("model_name", "unknown")
 print(f"Bundle loaded successfully. Model: {model_name}")
+imputer_schema_mismatch_logged = False
 
 
 def is_invalid_ip(ip: str) -> bool:
@@ -82,27 +87,28 @@ def decode_prediction(raw_pred: Any) -> str:
         return str(raw_pred)
 
 
-def log_attack_to_json(src_ip: str, prediction: str, confidence: float | None) -> None:
-    alert = {
+def log_event_to_json(src_ip: str, prediction: str, confidence: float | None, status: str) -> None:
+    event = {
         "time": time.strftime("%H:%M:%S"),
         "ip": src_ip,
         "attack": prediction,
         "confidence": None if confidence is None else round(confidence, 4),
-        "status": "ATTACK",
+        "status": status,
     }
     alerts = []
-    if os.path.exists(LOG_FILE):
+    if LOG_FILE.exists():
         try:
-            with open(LOG_FILE, "r", encoding="utf-8") as f:
+            with LOG_FILE.open("r", encoding="utf-8") as f:
                 alerts = json.load(f)
             if not isinstance(alerts, list):
                 alerts = []
         except Exception:
             alerts = []
 
-    alerts.insert(0, alert)
-    with open(LOG_FILE, "w", encoding="utf-8") as f:
-        json.dump(alerts[:250], f, indent=2)
+    alerts.insert(0, event)
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    with LOG_FILE.open("w", encoding="utf-8") as f:
+        json.dump(alerts[:MAX_LIVE_ROWS], f, indent=2)
 
 
 def update_health() -> None:
@@ -119,8 +125,8 @@ def update_health() -> None:
         "last_updated": time.strftime("%H:%M:%S"),
         "model_name": model_name,
     }
-    os.makedirs("outputs", exist_ok=True)
-    with open(HEALTH_FILE, "w", encoding="utf-8") as f:
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+    with HEALTH_FILE.open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2)
 
 
@@ -138,12 +144,31 @@ def prune_flows() -> None:
 
 
 def should_alert(prediction_label: str, confidence: float | None) -> bool:
-    is_attack_label = prediction_label != BENIGN_LABEL
-    if not is_attack_label:
-        return False
-    if confidence is None:
-        return True
-    return confidence >= ATTACK_CONFIDENCE_THRESHOLD
+    return prediction_label != BENIGN_LABEL
+
+
+def apply_imputer_if_compatible(df: pd.DataFrame) -> pd.DataFrame:
+    global imputer_schema_mismatch_logged
+    if imputer is None:
+        return df
+
+    expected_cols = getattr(imputer, "feature_names_in_", None)
+    if expected_cols is None:
+        return pd.DataFrame(imputer.transform(df), columns=df.columns, index=df.index)
+
+    expected = [str(c) for c in expected_cols]
+    actual = [str(c) for c in df.columns]
+    if expected != actual:
+        if not imputer_schema_mismatch_logged:
+            missing = sorted(set(expected).difference(actual))
+            print(
+                "Warning: imputer schema mismatch in realtime mode; "
+                f"skipping imputer. Missing columns sample: {missing[:5]}"
+            )
+            imputer_schema_mismatch_logged = True
+        return df
+
+    return pd.DataFrame(imputer.transform(df), columns=df.columns, index=df.index)
 
 
 def process_packet(packet) -> None:
@@ -184,9 +209,11 @@ def process_packet(packet) -> None:
         duration = max(time.time() - flow["start_time"], 0.001)
         live_df = build_live_feature_row(flow, selected_features, duration)
         live_df = align_features(live_df, selected_features)
-        if imputer is not None:
-            live_df = pd.DataFrame(imputer.transform(live_df), columns=live_df.columns)
-        scaled = scaler.transform(live_df)
+        scaled = pd.DataFrame(
+            scaler.transform(live_df),
+            columns=live_df.columns,
+            index=live_df.index,
+        )
 
         raw_pred = model.predict(scaled)[0]
         pred = decode_prediction(raw_pred)
@@ -194,12 +221,17 @@ def process_packet(packet) -> None:
         confidence = None
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(scaled)[0]
-            confidence = float(np.max(proba))
+            pred_index = int(raw_pred)
+            confidence = float(proba[pred_index])
         runtime["windows_processed"] += 1
         runtime["predictions"] += 1
 
         timestamp = time.strftime("%H:%M:%S")
-        if should_alert(pred, confidence):
+        is_attack = should_alert(pred, confidence)
+        status = "ATTACK" if is_attack else "NORMAL"
+        log_event_to_json(src_ip, pred, confidence, status)
+
+        if is_attack:
             flow["attack_streak"] += 1
             if flow["attack_streak"] >= ALERT_STREAK_THRESHOLD:
                 now = time.time()
@@ -207,7 +239,6 @@ def process_packet(packet) -> None:
                     last_alert_time[src_ip] = now
                     runtime["alerts_emitted"] += 1
                     print(f"[{timestamp}] ATTACK from {src_ip} ({pred}, conf={confidence})")
-                    log_attack_to_json(src_ip, pred, confidence)
         else:
             flow["attack_streak"] = 0
             flow["benign_checks"] += 1
@@ -248,17 +279,36 @@ class DemoInjectionHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
                 raise ValueError("payload must be an object")
-            numeric_payload = {k: float(v) for k, v in payload.items() if isinstance(v, (int, float))}
-            df = pd.DataFrame([numeric_payload]).fillna(0)
+            # 🔥 Convert payload → flow format
+            flow = {
+                "packet_count": float(payload.get("packet_count", 1)),
+                "total_bytes": float(payload.get("total_bytes", 1)),
+                "syn_count": float(payload.get("syn_count", 0)),
+            }
+
+            duration = 1.0  # fixed for demo
+
+            # 🔥 Build correct model features
+            df = build_live_feature_row(flow, selected_features, duration)
             df = align_features(df, selected_features)
-            if imputer is not None:
-                df = pd.DataFrame(imputer.transform(df), columns=df.columns)
-            scaled = scaler.transform(df)
+            scaled = pd.DataFrame(
+                scaler.transform(df),
+                columns=df.columns,
+                index=df.index,
+            )
             pred = decode_prediction(model.predict(scaled)[0])
             confidence = None
             if hasattr(model, "predict_proba"):
-                confidence = float(np.max(model.predict_proba(scaled)[0]))
-            log_attack_to_json("DEMO_IP", pred, confidence)
+                proba = model.predict_proba(scaled)[0]
+                pred_index = int(model.predict(scaled)[0])
+                confidence = float(proba[pred_index])
+            status = "ATTACK" if should_alert(pred, confidence) else "NORMAL"
+            log_event_to_json("DEMO_IP", pred, confidence, status)
+            runtime["windows_processed"] += 1
+            runtime["predictions"] += 1
+            if status == "ATTACK":
+                runtime["alerts_emitted"] += 1
+            update_health()
             self.send_response(200)
             self.end_headers()
         except Exception:

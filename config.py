@@ -30,7 +30,7 @@ CSV_PATHS = [
     "data/UDPLag.csv",
 ]
 
-SAMPLE_FRAC = 0.10
+SAMPLE_FRAC = 0.3
 
 # ── Attack classes ────────────────────────────────────────────
 ATTACK_CLASSES = {
@@ -68,7 +68,7 @@ RANDOM_SEED = 42
 OUTPUT_DIR = Path("outputs")
 
 # ── Realtime defaults ─────────────────────────────────────────
-REALTIME_WINDOW_PACKET_COUNT = 50
+REALTIME_WINDOW_PACKET_COUNT = 25
 REALTIME_ALERT_STREAK_THRESHOLD = 3
-REALTIME_ATTACK_CONFIDENCE_THRESHOLD = 0.90
+REALTIME_ATTACK_CONFIDENCE_THRESHOLD = 0.7
 REALTIME_COOLDOWN_SECONDS = 10

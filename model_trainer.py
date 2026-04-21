@@ -87,17 +87,15 @@ def build_models() -> dict[str, Any]:
             random_state=RANDOM_SEED,
         ),
         "Random Forest": RandomForestClassifier(
-            n_estimators=50,
+            n_estimators=200,
             criterion="entropy",
             max_features="sqrt",
             max_depth=25,
             min_samples_split=10,
             min_samples_leaf=5,
-            max_samples=0.3,
             class_weight="balanced",
             n_jobs=-1,
             oob_score=True,
-            warm_start=True,
             random_state=RANDOM_SEED,
         ),
         "Naive Bayes": GaussianNB(
@@ -318,17 +316,20 @@ def _save_artefacts(
     # 🔥 NEW: Save FULL inference bundle (VERY IMPORTANT)
     # --------------------------------------------------
     bundle = {
-        "schema_version": BUNDLE_SCHEMA_VERSION,
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "model": best_model,
-        "scaler": scaler,
-        "imputer": imputer,
-        "features": list(X_train.columns),
-        "label_encoder": label_encoder,
-        "model_name": best_name,
-        "selection_metric": f"{RECALL_WEIGHT}*recall + {PRECISION_WEIGHT}*precision",
-        "preprocess_report": preprocess_report,
-    }
+    "schema_version": BUNDLE_SCHEMA_VERSION,
+    "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+    "model": best_model,
+    "scaler": scaler,
+    "imputer": imputer,
+    "features": list(X_train.columns),
+    "label_encoder": label_encoder,
+    "model_name": best_name,
+    "selection_metric": f"{RECALL_WEIGHT}*recall + {PRECISION_WEIGHT}*precision",
+    "preprocess_report": preprocess_report,
+
+    # 🔥 ADD THIS
+    "attack_threshold": 0.6
+}
 
     bundle_path = OUTPUT_DIR / "inference_bundle.pkl"
     joblib.dump(bundle, bundle_path)

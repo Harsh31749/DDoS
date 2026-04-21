@@ -90,6 +90,35 @@ def preprocess_data(df: pd.DataFrame, label_col: str, benign_label: str) -> tupl
     )
     print(f"done. Remaining NaN: {int(X_filled.isnull().sum().sum())}")
 
+    eps = 1e-6
+
+    # Try to map dataset columns safely
+    duration = X_filled["Flow Duration"] + eps if "Flow Duration" in X_filled.columns else eps
+
+    packet_count = (
+        X_filled["Total Fwd Packets"]
+        if "Total Fwd Packets" in X_filled.columns
+        else 1
+    )
+
+    total_bytes = (
+        X_filled["Total Length of Fwd Packets"]
+        if "Total Length of Fwd Packets" in X_filled.columns
+        else 1
+    )
+
+    syn_count = (
+        X_filled["SYN Flag Count"]
+        if "SYN Flag Count" in X_filled.columns
+        else 0
+    )
+
+    # 🔥 Core engineered features
+    X_filled["packet_rate"] = packet_count / duration
+    X_filled["byte_rate"] = total_bytes / duration
+    X_filled["syn_ratio"] = syn_count / (packet_count + 1)
+
+    print("Added engineered features: packet_rate, byte_rate, syn_ratio")
     # 6. Remove constant columns
     const_cols = [c for c in X_filled.columns if X_filled[c].nunique(dropna=False) <= 1]
     X_filled.drop(columns=const_cols, inplace=True, errors="ignore")
