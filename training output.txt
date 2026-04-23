@@ -1,0 +1,402 @@
+python run.py
+(venv) PS D:\Coding\DDoS> python run.py
+============================================================
+  DDoS DETECTION — CONTROL PANEL
+============================================================
+
+Select mode:
+1 → Train model
+2 → Real-time detection
+3 → Dashboard only
+4 → Train + Dashboard
+5 → Real-time + Dashboard
+
+Enter choice (1-5): 1
+
+🚀 Running ML pipeline (training)...
+────────────────────────────────────────────────────────────
+============================================================
+  DDoS ATTACK DETECTION — ML PIPELINE
+  Dataset : CIC-DDoS2019
+  Mode    : train
+============================================================
+
+[1/7] Loading dataset from CSV paths...
+   📂 Reading: DrDoS_DNS.csv
+      Sampled 1,014,882 / 5,074,413 rows (20%)
+   📂 Reading: DrDoS_LDAP.csv
+      Sampled 436,308 / 2,181,542 rows (20%)
+   📂 Reading: DrDoS_MSSQL.csv
+      Sampled 904,899 / 4,524,498 rows (20%)
+   📂 Reading: DrDoS_NTP.csv
+      Sampled 243,401 / 1,217,007 rows (20%)
+   📂 Reading: DrDoS_NetBIOS.csv
+      Sampled 818,997 / 4,094,986 rows (20%)
+   📂 Reading: DrDoS_SNMP.csv
+      Sampled 1,032,275 / 5,161,377 rows (20%)
+   📂 Reading: DrDoS_SSDP.csv
+      Sampled 522,274 / 2,611,374 rows (20%)
+   📂 Reading: DrDoS_UDP.csv
+      Sampled 627,360 / 3,136,802 rows (20%)
+   📂 Reading: Syn.csv
+      Sampled 316,536 / 1,582,681 rows (20%)
+   📂 Reading: TFTP.csv
+      Sampled 4,021,565 / 20,107,827 rows (20%)
+   📂 Reading: UDPLag.csv
+      Sampled 74,121 / 370,605 rows (20%)
+
+   ✅ Total loaded: 10,012,618 rows × 88 columns
+
+📊 Class distribution:
+Label
+DrDoS_REFLECTION    250000
+TFTP                200000
+DrDoS_MSSQL         150000
+DrDoS_NTP           150000
+DrDoS_NetBIOS       150000
+DrDoS_UDP           150000
+Syn                 120000
+UDP-lag              73278
+BENIGN               11537
+WebDDoS                 96
+[2/7] Preprocessing...
+
+============================================================
+  STEP 1 — DATA PREPROCESSING
+============================================================
+[1] Dropped 7 identifier columns
+[2] ∞ → NaN. Total NaN cells: 88,638
+[3] Features: 79  |  Samples: 1,254,911
+[4] Numeric features retained: 78
+[5] Imputing NaN with column median... done. Remaining NaN: 0
+Added engineered features: packet_rate, byte_rate, syn_ratio
+[6] Removed 12 constant columns
+[6.5] Removed 1 low-variance columns
+[7] Detecting duplicate columns... removed 6 duplicates → 62 features remain
+[7.5] Removing highly correlated features... removed 19 correlated features → 43 features remain
+[8] IQR outlier removal on benign rows... removed 446 noisy benign rows
+[9] Classes encoded: ['BENIGN', 'DrDoS_MSSQL', 'DrDoS_NTP', 'DrDoS_NetBIOS', 'DrDoS_REFLECTION', 'DrDoS_UDP', 'Syn', 'TFTP', 'UDP-lag', 'WebDDoS']
+
+✅ Preprocessing done: (1254911, 88) → (1254465, 43)
+[3/7] Selecting features...
+
+============================================================
+  STEP 2 — FEATURE SELECTION (Mutual Information / InfoGain)
+============================================================
+  Dataset has 1,254,465 rows.
+  Sampling 200,000 rows (stratified) for MI scoring...
+  Scoring MI on 200,000 rows... done.
+
+✅ Selected top-43 features from 43 candidates
+   Applied to full dataset: 1,254,465 rows
+
+Top features (Mutual Information score):
+Fwd Packet Length Max          1.753979
+Total Length of Fwd Packets    1.742771
+Flow Bytes/s                   1.648090
+byte_rate                      1.360651
+act_data_pkt_fwd               0.787875
+Flow Duration                  0.716663
+Flow IAT Mean                  0.714989
+Flow Packets/s                 0.691045
+Fwd Header Length              0.593338
+packet_rate                    0.531684
+Total Fwd Packets              0.444619
+Init_Win_bytes_forward         0.413800
+ACK Flag Count                 0.383536
+min_seg_size_forward           0.264101
+Packet Length Std              0.256672
+Packet Length Variance         0.254161
+Fwd Packet Length Std          0.235525
+Flow IAT Min                   0.215586
+Bwd Packets/s                  0.077238
+Bwd Header Length              0.064085
+Bwd IAT Total                  0.061862
+Total Backward Packets         0.061361
+Bwd IAT Mean                   0.060531
+Bwd IAT Max                    0.060214
+Bwd IAT Min                    0.059060
+Init_Win_bytes_backward        0.054167
+Down/Up Ratio                  0.044334
+Inbound                        0.043891
+Idle Mean                      0.039711
+Active Mean                    0.038874
+Active Min                     0.038069
+Active Max                     0.037836
+Idle Std                       0.031310
+Bwd Packet Length Max          0.028239
+Bwd Packet Length Mean         0.024924
+Total Length of Bwd Packets    0.021880
+Bwd Packet Length Min          0.020657
+Active Std                     0.020643
+URG Flag Count                 0.018342
+Bwd Packet Length Std          0.007789
+CWE Flag Count                 0.007235
+Fwd PSH Flags                  0.005070
+SYN Flag Count                 0.000000
+
+💾 Selected feature list saved → outputs\selected_features.pkl
+
+💾 Feature importance chart saved → outputs\feature_importance.png
+[4/7] Splitting and normalizing...
+
+============================================================
+  STEP 3 — NORMALIZATION & TRAIN/TEST SPLIT
+============================================================
+Split: Train 878,125 | Test 376,340 (stratified, test_size=0.3)
+Normalizing with MinMaxScaler... done.
+[5/7] Training models...
+
+============================================================
+  STEP 4 — MODEL TRAINING & EVALUATION
+============================================================
+
+───────────────────────────────────────────────────────
+  Training: J48 (Decision Tree)
+  Rows: 878,125  |  Features: 43
+───────────────────────────────────────────────────────
+  Fitting... done.
+done.
+  Predicting on 376,340 test rows... done.
+
+  Train time : 0.553s  |  Infer time: 0.04024s
+  Accuracy   : 0.7952
+  Precision  : 0.8243
+  Recall     : 0.7952  <- PRIMARY METRIC
+  F1-Score   : 0.7815
+  AUC-ROC    : 0.9707
+
+  Classification Report:
+
+                  precision    recall  f1-score   support
+
+          BENIGN       0.97      0.99      0.98      3327
+     DrDoS_MSSQL       0.58      0.76      0.66     45000
+       DrDoS_NTP       0.99      0.95      0.97     45000
+   DrDoS_NetBIOS       0.95      0.99      0.97     45000
+DrDoS_REFLECTION       0.79      0.78      0.78     75000
+       DrDoS_UDP       0.74      0.98      0.84     45000
+             Syn       0.69      0.99      0.81     36000
+            TFTP       0.96      0.56      0.71     60000
+         UDP-lag       0.87      0.17      0.28     21984
+         WebDDoS       0.14      0.97      0.24        29
+
+        accuracy                           0.80    376340
+       macro avg       0.77      0.81      0.72    376340
+    weighted avg       0.82      0.80      0.78    376340
+
+
+───────────────────────────────────────────────────────
+  Training: Random Forest
+  Rows: 878,125  |  Features: 43
+───────────────────────────────────────────────────────
+  Building 350 trees (batch size 10)...
+D:\Coding\DDoS\venv\Lib\site-packages\sklearn\ensemble\_forest.py:611: UserWarning: Some inputs do not have OOB scores. This probably means too few trees were used to compute any reliable OOB estimates.
+  warn(
+  [ 10/350 trees] — 1.7s elapsed
+D:\Coding\DDoS\venv\Lib\site-packages\sklearn\ensemble\_forest.py:611: UserWarning: Some inputs do not have OOB scores. This probably means too few trees were used to compute any reliable OOB estimates.
+  warn(
+  [ 20/350 trees] — 4.9s elapsed
+  [ 30/350 trees] — 9.7s elapsed
+  [ 40/350 trees] — 16.1s elapsed
+  [ 50/350 trees] — 23.7s elapsed
+  [ 60/350 trees] — 33.2s elapsed
+  [ 70/350 trees] — 44.0s elapsed
+  [ 80/350 trees] — 56.1s elapsed
+  [ 90/350 trees] — 69.8s elapsed
+  [100/350 trees] — 85.6s elapsed
+  [110/350 trees] — 103.8s elapsed
+  [120/350 trees] — 123.4s elapsed
+  [130/350 trees] — 145.3s elapsed
+  [140/350 trees] — 168.4s elapsed
+  [150/350 trees] — 193.0s elapsed
+  [160/350 trees] — 219.6s elapsed
+  [170/350 trees] — 248.4s elapsed
+  [180/350 trees] — 278.2s elapsed
+  [190/350 trees] — 309.0s elapsed
+  [200/350 trees] — 341.6s elapsed
+  [210/350 trees] — 375.7s elapsed
+  [220/350 trees] — 411.5s elapsed
+  [230/350 trees] — 448.7s elapsed
+  [240/350 trees] — 488.0s elapsed
+  [250/350 trees] — 528.9s elapsed
+  [260/350 trees] — 570.9s elapsed
+  [270/350 trees] — 614.7s elapsed
+  [280/350 trees] — 660.2s elapsed
+  [290/350 trees] — 707.2s elapsed
+  [300/350 trees] — 756.2s elapsed
+  [310/350 trees] — 806.9s elapsed
+  [320/350 trees] — 858.6s elapsed
+  [330/350 trees] — 912.2s elapsed
+  [340/350 trees] — 967.4s elapsed
+  [350/350 trees] — 1024.3s elapsed
+  Predicting on 376,340 test rows... done.
+
+  Train time : 1024.332s  |  Infer time: 1.67411s
+  Accuracy   : 0.8753
+  Precision  : 0.9006
+  Recall     : 0.8753  <- PRIMARY METRIC
+  F1-Score   : 0.8636
+  AUC-ROC    : 0.9845
+  OOB Score  : 0.8730
+
+  Classification Report:
+
+                  precision    recall  f1-score   support
+
+          BENIGN       0.98      1.00      0.99      3327
+     DrDoS_MSSQL       0.79      0.96      0.87     45000
+       DrDoS_NTP       1.00      0.96      0.98     45000
+   DrDoS_NetBIOS       0.97      0.99      0.98     45000
+DrDoS_REFLECTION       0.97      0.77      0.86     75000
+       DrDoS_UDP       0.74      0.98      0.84     45000
+             Syn       0.70      1.00      0.82     36000
+            TFTP       1.00      0.90      0.94     60000
+         UDP-lag       0.96      0.17      0.29     21984
+         WebDDoS       0.16      0.83      0.27        29
+
+        accuracy                           0.88    376340
+       macro avg       0.83      0.85      0.78    376340
+    weighted avg       0.90      0.88      0.86    376340
+
+
+───────────────────────────────────────────────────────
+  Training: Naive Bayes
+  Rows: 878,125  |  Features: 43
+───────────────────────────────────────────────────────
+  Fitting... done.
+done.
+  Predicting on 376,340 test rows... done.
+
+  Train time : 0.45s  |  Infer time: 0.63761s
+  Accuracy   : 0.4603
+  Precision  : 0.5183
+  Recall     : 0.4603  <- PRIMARY METRIC
+  F1-Score   : 0.4095
+  AUC-ROC    : 0.9174
+
+  Classification Report:
+
+                  precision    recall  f1-score   support
+
+          BENIGN       0.95      0.69      0.80      3327
+     DrDoS_MSSQL       0.21      1.00      0.35     45000
+       DrDoS_NTP       0.95      0.80      0.87     45000
+   DrDoS_NetBIOS       0.08      0.00      0.00     45000
+DrDoS_REFLECTION       0.27      0.02      0.03     75000
+       DrDoS_UDP       0.72      0.47      0.57     45000
+             Syn       0.65      1.00      0.79     36000
+            TFTP       0.92      0.53      0.67     60000
+         UDP-lag       0.23      0.00      0.00     21984
+         WebDDoS       0.02      0.97      0.04        29
+
+        accuracy                           0.46    376340
+       macro avg       0.50      0.55      0.41    376340
+    weighted avg       0.52      0.46      0.41    376340
+
+
+───────────────────────────────────────────────────────
+  Training: XGBoost
+  Rows: 878,125  |  Features: 43
+───────────────────────────────────────────────────────
+  Fitting... done.
+done.
+  Predicting on 376,340 test rows... done.
+
+  Train time : 55.265s  |  Infer time: 1.17962s
+  Accuracy   : 0.8974
+  Precision  : 0.9131
+  Recall     : 0.8974  <- PRIMARY METRIC
+  F1-Score   : 0.8858
+  AUC-ROC    : 0.9861
+
+  Classification Report:
+
+                  precision    recall  f1-score   support
+
+          BENIGN       0.99      1.00      1.00      3327
+     DrDoS_MSSQL       0.94      0.95      0.94     45000
+       DrDoS_NTP       0.99      0.99      0.99     45000
+   DrDoS_NetBIOS       0.97      0.98      0.98     45000
+DrDoS_REFLECTION       0.97      0.79      0.87     75000
+       DrDoS_UDP       0.74      0.98      0.84     45000
+             Syn       0.70      1.00      0.82     36000
+            TFTP       1.00      0.99      1.00     60000
+         UDP-lag       0.87      0.18      0.30     21984
+         WebDDoS       0.15      0.83      0.25        29
+
+        accuracy                           0.90    376340
+       macro avg       0.83      0.87      0.80    376340
+    weighted avg       0.91      0.90      0.89    376340
+
+💾 Saved model → outputs\j48_decision_tree_model.pkl
+💾 Saved model → outputs\random_forest_model.pkl
+💾 Saved model → outputs\naive_bayes_model.pkl
+💾 Saved model → outputs\xgboost_model.pkl
+💾 Saved scaler → outputs\minmax_scaler.pkl
+💾 Saved features → outputs\selected_features.pkl
+💾 Saved encoder → outputs\label_encoder.pkl
+💾 Saved imputer → outputs\median_imputer.pkl
+
+🔥 Best model saved → outputs\best_model.pkl
+🔥 Inference bundle saved → outputs\inference_bundle.pkl
+
+✅ Deployment model: 'XGBoost' (weighted objective)
+💾 Config saved → outputs\deployment_config.json
+[6/7] Creating visualizations...
+💾 Confusion matrices saved → outputs\confusion_matrices.png
+💾 Metric comparison saved → outputs\metric_comparison.png
+[7/7] Running CV evaluation and exporting...
+
+============================================================
+  PERFORMANCE DASHBOARD SUMMARY
+============================================================
+                     Accuracy  Precision  Recall  F1-Score  AUC-ROC  Train (s)  Infer (s)
+Model                                                                                    
+J48 (Decision Tree)    0.7952     0.8243  0.7952    0.7815   0.9707      0.553    0.04024
+Random Forest          0.8753     0.9006  0.8753    0.8636   0.9845   1024.332    1.67411
+Naive Bayes            0.4603     0.5183  0.4603    0.4095   0.9174      0.450    0.63761
+XGBoost                0.8974     0.9131  0.8974    0.8858   0.9861     55.265    1.17962
+
+============================================================
+  SAFE 5-FOLD CROSS-VALIDATION (SAMPLED)
+============================================================
+
+Sampling 500,000 rows for CV...
+
+  → J48 (Decision Tree)
+     Recall: 0.8686 ± 0.0146
+
+  → Random Forest
+     Recall: 0.8844 ± 0.0008
+
+  → Naive Bayes
+     Recall: 0.2438 ± 0.0547
+
+  → XGBoost
+     Recall: 0.8974 ± 0.0007
+
+Cross-Validation Summary:
+                     CV Recall Mean  CV Recall Std
+Model                                             
+J48 (Decision Tree)          0.8686         0.0146
+Random Forest                0.8844         0.0008
+Naive Bayes                  0.2438         0.0547
+XGBoost                      0.8974         0.0007
+
+💾 Results exported to outputs/
+
+============================================================
+  PIPELINE COMPLETE
+============================================================
+   J48 (Decision Tree)             Acc=0.795  Prec=0.824  Rec=0.795  F1=0.781
+   Random Forest                   Acc=0.875  Prec=0.901  Rec=0.875  F1=0.864
+   Naive Bayes                     Acc=0.460  Prec=0.518  Rec=0.460  F1=0.409
+⭐ XGBoost                         Acc=0.897  Prec=0.913  Rec=0.897  F1=0.886
+
+📌 The ⭐ model has the highest Recall — recommended for deployment.
+   Monitor Precision alongside Recall to tune alert thresholds.
+
+✅ Pipeline complete in 1534.84s. Check the outputs/ folder.
+
+✅ Training complete!

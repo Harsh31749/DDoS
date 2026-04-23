@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-# ============================================================
-# model_trainer.py — Define, split, normalize, and train models
-# ============================================================
-
 import json
 import time
 from datetime import datetime, timezone
 from typing import Any
-
+import matplotlib.pyplot as plt
+import seaborn as sns
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.utils.class_weight import compute_sample_weight
 from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.metrics import (
     accuracy_score,
     classification_report,
@@ -79,21 +78,23 @@ def build_models() -> dict[str, Any]:
     return {
         "J48 (Decision Tree)": DecisionTreeClassifier(
             criterion="entropy",
-            max_depth=None,
-            min_samples_split=10,
-            min_samples_leaf=5,
-            min_impurity_decrease=1e-7,
+            max_depth=10,
+            min_samples_split=30,
+            min_samples_leaf=15,
+            min_impurity_decrease=1e-4,
+            max_features="sqrt",
             class_weight="balanced",
             random_state=RANDOM_SEED,
         ),
         "Random Forest": RandomForestClassifier(
-            n_estimators=200,
-            criterion="entropy",
+            n_estimators=350,
+            criterion="gini",
             max_features="sqrt",
-            max_depth=25,
-            min_samples_split=10,
-            min_samples_leaf=5,
-            class_weight="balanced",
+            max_depth=10,
+            min_samples_split=5,
+            min_samples_leaf=2,
+            max_samples=0.8,
+            class_weight="balanced_subsample",
             n_jobs=-1,
             oob_score=True,
             random_state=RANDOM_SEED,
@@ -101,6 +102,22 @@ def build_models() -> dict[str, Any]:
         "Naive Bayes": GaussianNB(
             var_smoothing=1e-9,
         ),
+        "XGBoost": XGBClassifier(
+            n_estimators=350,
+            max_depth=10,
+            learning_rate=0.02,   
+            subsample=0.9,
+            colsample_bytree=0.9,
+            gamma=0.1,            
+            min_child_weight=3,
+            reg_alpha=0.3,
+            reg_lambda=1.5,
+            objective="multi:softprob",
+            eval_metric="mlogloss",
+            tree_method="hist",
+            random_state=42,
+            n_jobs=-1
+        )
     }
 
 
@@ -135,7 +152,20 @@ def train_all_models(
             model = _train_rf_with_progress(model, X_train, y_train)
         else:
             print("  Fitting... ", end="", flush=True)
-            model.fit(X_train, y_train)
+
+            if name == "XGBoost":
+                sample_weights = compute_sample_weight("balanced", y_train)
+
+                model.fit(
+                    X_train,
+                    y_train,
+                    sample_weight=sample_weights,
+                )
+
+            else:
+                model.fit(X_train, y_train)
+
+            print("done.")
             print("done.")
         train_time = round(time.time() - t0, 3)
 
@@ -207,6 +237,37 @@ def train_all_models(
                 zero_division=0,
             ),
         }
+        # 🔥 SAVE CONFUSION MATRIX IMAGE
+        labels = [str(c) for c in label_encoder.classes_]
+        safe = _safe_name(name)
+
+        def save_confusion_matrix_image(cm, labels, title, filename):
+            plt.figure(figsize=(10, 8))
+
+            sns.heatmap(
+                cm,
+                annot=False,
+                cmap="Blues",
+                xticklabels=labels,
+                yticklabels=labels
+            )
+
+            plt.title(title)
+            plt.xlabel("Predicted")
+            plt.ylabel("Actual")
+            plt.xticks(rotation=45, ha="right")
+            plt.yticks(rotation=0)
+            plt.tight_layout()
+
+            plt.savefig(OUTPUT_DIR / filename)
+            plt.close()
+        
+        save_confusion_matrix_image(
+            all_results[name]["confusion_matrix"],
+            labels,
+            f"{name} Confusion Matrix",
+            f"cm_{safe}.png"
+        )
 
     _save_artefacts(
         all_results=all_results,
@@ -327,8 +388,6 @@ def _save_artefacts(
     "selection_metric": f"{RECALL_WEIGHT}*recall + {PRECISION_WEIGHT}*precision",
     "preprocess_report": preprocess_report,
 
-    # 🔥 ADD THIS
-    "attack_threshold": 0.6
 }
 
     bundle_path = OUTPUT_DIR / "inference_bundle.pkl"

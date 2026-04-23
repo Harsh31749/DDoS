@@ -14,17 +14,6 @@ from config import ATTACK_CLASSES, BENIGN_LABEL, DATASET_NAME, LABEL_COLUMN, RAN
 
 
 def load_dataset(paths: list[str], label_col: str, sample_frac: float = 1.0) -> pd.DataFrame:
-    """
-    Load CSVs with optional per-file random sampling during read.
-
-    Args:
-        paths: list of CSV file paths
-        label_col: label column name
-        sample_frac: fraction to keep from each file (0 < sample_frac <= 1)
-
-    Returns:
-        Concatenated DataFrame.
-    """
     if not (0 < sample_frac <= 1):
         raise ValueError(f"sample_frac must be in (0, 1], got {sample_frac}")
 
@@ -43,21 +32,20 @@ def load_dataset(paths: list[str], label_col: str, sample_frac: float = 1.0) -> 
             df_chunk = pd.read_csv(path, low_memory=False)
             print(f"      Loaded full file: {len(df_chunk):,} rows")
         else:
-            # Count rows excluding header
             with path.open("r", encoding="utf-8", errors="replace") as f:
                 total_rows = max(0, sum(1 for _ in f) - 1)
 
             if total_rows == 0:
-                print("      ⚠️ Empty file (no data rows), skipping")
+                print("      ⚠️ Empty file, skipping")
                 continue
 
             keep_count = max(1, int(total_rows * sample_frac))
             skip_count = total_rows - keep_count
 
             rng = np.random.default_rng(RANDOM_SEED)
-            all_row_indices = np.arange(1, total_rows + 1)  # row 0 is header
-            skip_indices = rng.choice(all_row_indices, size=skip_count, replace=False)
-            skip_set = set(skip_indices.tolist())
+            all_rows = np.arange(1, total_rows + 1)
+            skip_idx = rng.choice(all_rows, size=skip_count, replace=False)
+            skip_set = set(skip_idx.tolist())
 
             df_chunk = pd.read_csv(
                 path,
@@ -65,34 +53,85 @@ def load_dataset(paths: list[str], label_col: str, sample_frac: float = 1.0) -> 
                 low_memory=False,
             )
 
-            print(
-                f"      Sampled {len(df_chunk):,} / {total_rows:,} rows "
-                f"({sample_frac * 100:.0f}%)"
-            )
+            print(f"      Sampled {len(df_chunk):,} / {total_rows:,} rows ({sample_frac*100:.0f}%)")
 
         frames.append(df_chunk)
 
     if not frames:
-        raise ValueError("No data loaded. Check CSV_PATHS and file contents.")
+        raise ValueError("No data loaded. Check CSV_PATHS.")
 
+    # ✅ CONCAT
     df = pd.concat(frames, ignore_index=True)
 
-    # Strip whitespace from column names
+    # ✅ CLEAN COLUMN NAMES FIRST
     df.columns = df.columns.str.strip()
+
+    # =========================================================
+    # 🔥 HYBRID BALANCING (FIXED + OPTIMIZED)
+    # =========================================================
+    df.columns = df.columns.str.strip()
+
+
+    # =========================================================
 
     print(f"\n   ✅ Total loaded: {len(df):,} rows × {df.shape[1]} columns")
 
     if label_col not in df.columns:
-        raise ValueError(
-            f"Label column '{label_col}' not found after stripping whitespace. "
-            f"Available sample columns: {list(df.columns[:12])}"
-        )
+        raise ValueError(f"Label column '{label_col}' not found!")
+    df[label_col] = df[label_col].astype(str).str.strip()
+    # =========================================================
+# 🔥 CLASS GROUPING (13 → 9 CLASSES)
+# =========================================================
+    def map_attack(label: str) -> str:
+        if label in ["DrDoS_DNS", "DrDoS_SSDP", "DrDoS_LDAP", "DrDoS_SNMP"]:
+            return "DrDoS_REFLECTION"
+        return label
+
+    df[label_col] = df[label_col].apply(map_attack)
 
     print("\n📊 Class distribution:")
-    print(df[label_col].value_counts(dropna=False).to_string())
+    balanced = []
+
+    for label, group in df.groupby(label_col):
+
+        # 🔥 VERY DOMINANT CLASS
+        if label == "TFTP":
+            target_size = 200000
+
+        # 🔥 HARD / CONFUSING CLASSES (BOOST)
+        elif label == "DrDoS_REFLECTION":
+            target_size = 250000   # ↑ increase
+
+        # 🔥 NORMAL DrDoS CLASSES
+        elif label.startswith("DrDoS"):
+            target_size = 150000
+
+        # 🔥 MID CLASS
+        elif label == "Syn":
+            target_size = 120000
+
+        # 🔥 VERY WEAK CLASS (BOOST HARD)
+        elif label == "UDP-lag":
+            target_size = 150000   # was 50k ❌
+
+        # 🔥 BENIGN (keep small but not too small)
+        elif label == "BENIGN":
+            target_size = 40000
+
+        # 🔥 EXTREMELY RARE (leave as is)
+        else:  # WebDDoS
+            target_size = len(group)
+
+        if len(group) > target_size:
+            balanced.append(group.sample(target_size, random_state=42))
+        else:
+            balanced.append(group)
+
+    df = pd.concat(balanced, ignore_index=True)
+    
+    print(df[label_col].value_counts().to_string())
 
     return df
-
 
 def generate_synthetic_dataset(n_samples: int = 50_000) -> pd.DataFrame:
     """

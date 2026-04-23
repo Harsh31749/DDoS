@@ -13,7 +13,7 @@ LABEL_COLUMN = " Label"  # CIC-DDoS2019 may include a leading-space header
 BENIGN_LABEL = "BENIGN"
 
 # ── Mode ─────────────────────────────────────────────────────
-DEMO_MODE = False  # False = use real CSVs below
+DEMO_MODE = False  # False = use real CSVs beVw
 
 # ── CSV paths ─────────────────────────────────────────────────
 CSV_PATHS = [
@@ -30,7 +30,7 @@ CSV_PATHS = [
     "data/UDPLag.csv",
 ]
 
-SAMPLE_FRAC = 0.3
+SAMPLE_FRAC = 0.2
 
 # ── Attack classes ────────────────────────────────────────────
 ATTACK_CLASSES = {
@@ -54,11 +54,11 @@ ATTACK_CLASSES = {
 }
 
 # ── Feature selection ─────────────────────────────────────────
-TOP_K_FEATURES = 25
+TOP_K_FEATURES = 50
 
 # ── Deployment model selection objective ─────────────────────
-RECALL_WEIGHT = 0.70
-PRECISION_WEIGHT = 0.30
+RECALL_WEIGHT = 0.75
+PRECISION_WEIGHT = 0.25
 
 # ── Train / test split ────────────────────────────────────────
 TEST_SIZE = 0.30
@@ -68,7 +68,7 @@ RANDOM_SEED = 42
 OUTPUT_DIR = Path("outputs")
 
 # ── Realtime defaults ─────────────────────────────────────────
-REALTIME_WINDOW_PACKET_COUNT = 25
+REALTIME_WINDOW_PACKET_COUNT = 10
 REALTIME_ALERT_STREAK_THRESHOLD = 3
-REALTIME_ATTACK_CONFIDENCE_THRESHOLD = 0.7
+REALTIME_ATTACK_CONFIDENCE_THRESHOLD = 0.5
 REALTIME_COOLDOWN_SECONDS = 10

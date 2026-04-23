@@ -54,6 +54,7 @@ def preprocess_data(df: pd.DataFrame, label_col: str, benign_label: str) -> tupl
 
     # Normalize dataframe column names
     df.columns = df.columns.str.strip()
+    df = df.loc[:, ~df.columns.str.contains("^Unnamed")]
 
     if label_col not in df.columns:
         raise ValueError(
@@ -123,12 +124,32 @@ def preprocess_data(df: pd.DataFrame, label_col: str, benign_label: str) -> tupl
     const_cols = [c for c in X_filled.columns if X_filled[c].nunique(dropna=False) <= 1]
     X_filled.drop(columns=const_cols, inplace=True, errors="ignore")
     print(f"[6] Removed {len(const_cols)} constant columns")
+    # 🔥 6.5 Remove low-variance features (NEW)
+    low_var_threshold = 1e-5
+    low_var_cols = [c for c in X_filled.columns if X_filled[c].var() < low_var_threshold]
+
+    if low_var_cols:
+        X_filled.drop(columns=low_var_cols, inplace=True)
+        print(f"[6.5] Removed {len(low_var_cols)} low-variance columns")
 
     # 7. Remove duplicate columns
     print("[7] Detecting duplicate columns... ", end="", flush=True)
     dup_cols = _find_duplicate_columns_fast(X_filled)
     X_filled.drop(columns=dup_cols, inplace=True, errors="ignore")
     print(f"removed {len(dup_cols)} duplicates → {X_filled.shape[1]} features remain")
+    # 🔥 7.5 Remove highly correlated features (NEW)
+    print("[7.5] Removing highly correlated features... ", end="", flush=True)
+
+    corr_matrix = X_filled.corr().abs()
+
+    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+
+    high_corr_cols = [column for column in upper.columns if any(upper[column] > 0.95)]
+
+    if high_corr_cols:
+        X_filled.drop(columns=high_corr_cols, inplace=True)
+
+    print(f"removed {len(high_corr_cols)} correlated features → {X_filled.shape[1]} features remain")
 
     # 8. IQR outlier removal on benign rows (sampled threshold estimation)
     print("[8] IQR outlier removal on benign rows... ", end="", flush=True)
@@ -167,7 +188,6 @@ def preprocess_data(df: pd.DataFrame, label_col: str, benign_label: str) -> tupl
     le = LabelEncoder()
     y_encoded = le.fit_transform(y_raw)
     print(f"[9] Classes encoded: {list(le.classes_)}")
-
     # reset aligned index
     X_filled.reset_index(drop=True, inplace=True)
 
@@ -195,7 +215,7 @@ def _find_duplicate_columns_fast(df: pd.DataFrame) -> list[str]:
     to_drop: list[str] = []
 
     for col in df.columns:
-        col_hash = int(pd.util.hash_pandas_object(df[col], index=False).sum())
+        col_hash = int(pd.util.hash_pandas_object(df[col].astype(str), index=False).sum())
         if col_hash in col_hashes:
             existing_col = col_hashes[col_hash]
             if df[col].equals(df[existing_col]):

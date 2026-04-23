@@ -9,11 +9,12 @@ from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from typing import Any
-
 import joblib
 import numpy as np
 import pandas as pd
 from scapy.all import IP, TCP, sniff
+from scapy.config import conf
+from streamlit import status
 
 from config import (
     BENIGN_LABEL,
@@ -34,12 +35,13 @@ MAX_TRACKED_FLOWS = 5000
 SNIFF_FILTER = "tcp and (port 80 or port 443)"
 ENABLE_DEMO_SERVER = True
 DEMO_TOKEN = os.getenv("DDoS_DEMO_TOKEN", "")
-
+BENIGN_LOG_EVERY_WINDOWS = 10
 BASE_DIR = Path(__file__).resolve().parent
 OUTPUTS_DIR = BASE_DIR / "outputs"
 LOG_FILE = OUTPUTS_DIR / "live_alerts.json"
 HEALTH_FILE = OUTPUTS_DIR / "live_metrics.json"
 MAX_LIVE_ROWS = 25
+PAUSE_FILE = OUTPUTS_DIR / "pause.flag"
 
 active_flows: dict[str, dict[str, Any]] = {}
 last_alert_time: dict[str, float] = {}
@@ -66,6 +68,23 @@ model_name = bundle.get("model_name", "unknown")
 print(f"Bundle loaded successfully. Model: {model_name}")
 imputer_schema_mismatch_logged = False
 
+# 🔥 NEW: IP classification + whitelist
+
+WHITELIST_PREFIXES = ["13.", "40.", "52.", "44.", "104."]
+TRUSTED_PROVIDERS = {"Microsoft", "AWS", "Cloudflare", "Google Cloud", "GitHub"}
+
+def classify_ip(ip):
+    if ip.startswith(("13.", "40.")):
+        return "Microsoft"
+    if ip.startswith(("52.", "44.", "3.")):
+        return "AWS"
+    if ip.startswith("104.") or ip.startswith("172.67."):
+        return "Cloudflare"
+    if ip.startswith("35."):
+        return "Google Cloud"
+    if ip.startswith("140.82."):
+        return "GitHub"
+    return "Unknown"
 
 def is_invalid_ip(ip: str) -> bool:
     try:
@@ -73,7 +92,6 @@ def is_invalid_ip(ip: str) -> bool:
         return ip_obj.is_private or ip_obj.is_loopback or ip_obj.is_multicast or ip.endswith(".255")
     except ValueError:
         return True
-
 
 def decode_prediction(raw_pred: Any) -> str:
     if label_encoder is not None:
@@ -87,19 +105,40 @@ def decode_prediction(raw_pred: Any) -> str:
         return str(raw_pred)
 
 
-def log_event_to_json(src_ip: str, prediction: str, confidence: float | None, status: str) -> None:
+def log_event_to_json(src_ip: str, attack_name: str, confidence: float | None, status: str) -> None:
+    conf = confidence if confidence is not None else 0.0
+
+    if str(attack_name).strip().upper() == BENIGN_LABEL:
+        threat = "LOW"
+    else:
+        
+        if status == "ATTACK":
+            threat = "HIGH"
+        elif status == "SUSPICIOUS":
+            threat = "MEDIUM"
+        else:
+            threat = "LOW"
+
     event = {
-        "time": time.strftime("%H:%M:%S"),
+        "Time": time.strftime("%H:%M:%S"),
         "ip": src_ip,
-        "attack": prediction,
+        "ip_type": classify_ip(src_ip),
+        "attack": attack_name,
         "confidence": None if confidence is None else round(confidence, 4),
+        "threat": threat,
         "status": status,
     }
+
     alerts = []
     if LOG_FILE.exists():
         try:
             with LOG_FILE.open("r", encoding="utf-8") as f:
-                alerts = json.load(f)
+                try:
+                    alerts = json.load(f)
+                    if not isinstance(alerts, list):
+                        alerts = []
+                except Exception:
+                    alerts = []
             if not isinstance(alerts, list):
                 alerts = []
         except Exception:
@@ -107,8 +146,28 @@ def log_event_to_json(src_ip: str, prediction: str, confidence: float | None, st
 
     alerts.insert(0, event)
     OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-    with LOG_FILE.open("w", encoding="utf-8") as f:
-        json.dump(alerts[:MAX_LIVE_ROWS], f, indent=2)
+
+    temp_file = LOG_FILE.with_suffix(".tmp")
+
+# Ensure directory exists BEFORE writing
+    OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Write safely
+    try:
+        with temp_file.open("w", encoding="utf-8") as f:
+            json.dump(alerts[:MAX_LIVE_ROWS], f, indent=2)
+    except Exception as e:
+        print(f"Temp write failed: {e}")
+        return   # 🚨 STOP here if write failed
+
+    # Replace safely
+    for _ in range(5):
+        try:
+            if temp_file.exists():   # ✅ IMPORTANT CHECK
+                os.replace(temp_file, LOG_FILE)
+                break
+        except PermissionError:
+            time.sleep(0.01)
 
 
 def update_health() -> None:
@@ -215,21 +274,46 @@ def process_packet(packet) -> None:
             index=live_df.index,
         )
 
-        raw_pred = model.predict(scaled)[0]
-        pred = decode_prediction(raw_pred)
+        # -------- SAFE PREDICTION --------
+        raw_pred = model.predict(scaled)
+        raw_pred = int(np.array(raw_pred).flatten()[0])
+
+        pred = decode_prediction(raw_pred)   # string label
 
         confidence = None
         if hasattr(model, "predict_proba"):
             proba = model.predict_proba(scaled)[0]
-            pred_index = int(raw_pred)
-            confidence = float(proba[pred_index])
+            confidence = float(proba[raw_pred])   # ✅ always use raw_pred
+
+        # -------- COUNTERS --------
         runtime["windows_processed"] += 1
         runtime["predictions"] += 1
 
         timestamp = time.strftime("%H:%M:%S")
-        is_attack = should_alert(pred, confidence)
-        status = "ATTACK" if is_attack else "NORMAL"
-        log_event_to_json(src_ip, pred, confidence, status)
+        conf = confidence if confidence is not None else 0.0
+        ip_type = classify_ip(src_ip)
+
+        # -------- STATUS LOGIC --------
+        if ip_type in TRUSTED_PROVIDERS:
+            status = "TRUSTED"
+
+        elif pred != BENIGN_LABEL:
+            if conf >= 0.6:
+                status = "ATTACK"
+            elif conf >= 0.5:
+                status = "SUSPICIOUS"
+            else:
+                status = "NORMAL"
+
+        else:
+            status = "NORMAL"
+
+        is_attack = (status == "ATTACK")
+
+
+        if not PAUSE_FILE.exists():
+            if status == "ATTACK" or flow["benign_checks"] % BENIGN_LOG_EVERY_WINDOWS == 0:
+                log_event_to_json(src_ip, pred, conf, status)
 
         if is_attack:
             flow["attack_streak"] += 1
@@ -239,11 +323,6 @@ def process_packet(packet) -> None:
                     last_alert_time[src_ip] = now
                     runtime["alerts_emitted"] += 1
                     print(f"[{timestamp}] ATTACK from {src_ip} ({pred}, conf={confidence})")
-        else:
-            flow["attack_streak"] = 0
-            flow["benign_checks"] += 1
-            if flow["benign_checks"] % BENIGN_LOG_EVERY_WINDOWS == 0:
-                print(f"[{timestamp}] benign traffic from {src_ip}")
 
         prune_flows()
         update_health()
@@ -296,14 +375,35 @@ class DemoInjectionHandler(BaseHTTPRequestHandler):
                 columns=df.columns,
                 index=df.index,
             )
-            pred = decode_prediction(model.predict(scaled)[0])
+            raw_pred = model.predict(scaled)
+            raw_pred = int(np.array(raw_pred).flatten()[0])
+
+            pred = decode_prediction(raw_pred)
+
             confidence = None
             if hasattr(model, "predict_proba"):
                 proba = model.predict_proba(scaled)[0]
-                pred_index = int(model.predict(scaled)[0])
-                confidence = float(proba[pred_index])
-            status = "ATTACK" if should_alert(pred, confidence) else "NORMAL"
-            log_event_to_json("DEMO_IP", pred, confidence, status)
+                confidence = float(proba[raw_pred])
+
+            conf = confidence if confidence is not None else 0.0
+
+            ip_type = "Demo"
+
+            if ip_type in TRUSTED_PROVIDERS:
+                pred = BENIGN_LABEL
+                status = "TRUSTED"
+
+            elif pred != BENIGN_LABEL:
+                if conf >= 0.6:
+                    status = "ATTACK"
+                elif conf >= 0.5:
+                    status = "SUSPICIOUS"
+                else:
+                    status = "NORMAL"
+            else:
+                status = "NORMAL"
+
+            log_event_to_json("DEMO_IP", pred, conf, status)
             runtime["windows_processed"] += 1
             runtime["predictions"] += 1
             if status == "ATTACK":

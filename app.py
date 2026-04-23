@@ -235,206 +235,310 @@ with c4:
     except Exception:
         st.metric("Detection Rate", "N/A", delta="Primary Goal")
 
+tab1, tab2, tab3 = st.tabs([
+    "📊 Overview",
+    "🧠 Model Insights",
+    "🚨 Live Monitoring"
+])
 # ============================================================
 # SECTION 1: PERFORMANCE OVERVIEW
 # ============================================================
-st.markdown("<div class='section-title'>📊 Model Performance Overview</div>", unsafe_allow_html=True)
-col_left, col_right = st.columns([1.2, 1])
+with tab1:
+    st.markdown("<div class='section-title'>📊 Model Performance Overview</div>", unsafe_allow_html=True)
+    col_left, col_right = st.columns([1.2, 1])
 
-with col_left:
-    highlight_cols = [c for c in ["Recall", "F1-Score"] if c in perf_df.columns]
-    styled = perf_df.style
-    if highlight_cols:
-        styled = styled.highlight_max(axis=0, color="#1e3a8a", subset=highlight_cols)
+    with col_left:
+        highlight_cols = [c for c in ["Recall", "F1-Score"] if c in perf_df.columns]
+        styled = perf_df.style
+        if highlight_cols:
+            styled = styled.highlight_max(axis=0, color="#8ea3be", subset=highlight_cols)
 
-    st.dataframe(styled, use_container_width=True)
-    st.info(f"💡 **Insight:** {best_model} was selected for real-time deployment because it minimizes False Negatives.")
+        st.dataframe(styled, use_container_width=True)
+        st.info(f"💡 **Insight:** {best_model} was selected for real-time deployment because it minimizes False Negatives.")
 
-with col_right:
-    model_col_name = perf_df.index.name or "Model"
-    chart_df = perf_df.reset_index().rename(columns={perf_df.index.name: model_col_name} if perf_df.index.name else {})
-    value_vars = [c for c in ["Accuracy", "Precision", "Recall", "F1-Score"] if c in chart_df.columns]
+    with col_right:
+        model_col_name = perf_df.index.name or "Model"
+        chart_df = perf_df.reset_index().rename(columns={perf_df.index.name: model_col_name} if perf_df.index.name else {})
+        value_vars = [c for c in ["Accuracy", "Precision", "Recall", "F1-Score"] if c in chart_df.columns]
 
-    if value_vars:
-        melted = chart_df.melt(
-            id_vars=[model_col_name],
-            value_vars=value_vars,
-            var_name="Metric",
-            value_name="Score",
-        )
+        if value_vars:
+            melted = chart_df.melt(
+                id_vars=[model_col_name],
+                value_vars=value_vars,
+                var_name="Metric",
+                value_name="Score",
+            )
 
-        fig_bar = px.bar(
-            melted,
-            x="Metric",
-            y="Score",
-            color=model_col_name,
-            barmode="group",
-            text_auto=".3f",
-            color_discrete_sequence=px.colors.qualitative.Pastel,
-        )
-        fig_bar.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20), legend_title_text="Classifier")
-        fig_bar.update_traces(textposition="inside", textangle=-90, textfont_size=11)
-        st.plotly_chart(fig_bar, use_container_width=True)
-    else:
-        st.info("No metric columns available for charting.")
+            fig_bar = px.bar(
+                melted,
+                x="Metric",
+                y="Score",
+                color=model_col_name,
+                barmode="group",
+                text_auto=".3f",
+                color_discrete_sequence=px.colors.qualitative.Pastel,
+            )
+            fig_bar.update_layout(height=400, margin=dict(l=20, r=20, t=30, b=20), legend_title_text="Classifier")
+            fig_bar.update_traces(textposition="inside", textangle=-90, textfont_size=11)
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("No metric columns available for charting.")
+    st.markdown("---")
+    st.markdown(
+    "<h6 style='text-align: center;'>🛡️ DDoS AI Shield Dashboard</h5>",
+    unsafe_allow_html=True
+)
 
 # ============================================================
 # SECTION 2: AI INTELLIGENCE & FEATURES
 # ============================================================
-st.markdown("<div class='section-title'>🧠 Feature Decision Intelligence</div>", unsafe_allow_html=True)
-f_col1, f_col2 = st.columns([1, 1])
+with tab2:
+        # SECTION 2 + 3 content
+    st.markdown("<div class='section-title'>🧠 Feature Decision Intelligence</div>", unsafe_allow_html=True)
 
-with f_col1:
     if payload and isinstance(payload.get("top_features"), dict):
-        top_features = (
+
+        df_feat = (
             pd.DataFrame(list(payload["top_features"].items()), columns=["Feature", "Score"])
             .sort_values("Score", ascending=False)
-            .head(15)
         )
 
+        # 🔥 Remove junk column
+        df_feat = df_feat[~df_feat["Feature"].str.contains("Unnamed")]
+
+        # 🔥 Top 40 features
+        df_feat = df_feat.head(40)
+
         fig_feat = px.bar(
-            top_features,
+            df_feat,
             x="Score",
             y="Feature",
             orientation="h",
             color="Score",
             color_continuous_scale="Tealgrn",
+            title="Top 20 Feature Importance"
         )
-        fig_feat.update_layout(height=500, yaxis={"categoryorder": "total ascending"}, showlegend=False)
+
+        fig_feat.update_layout(
+            height=600,
+            yaxis=dict(autorange="reversed"),
+            margin=dict(l=20, r=20, t=40, b=20),
+        )
+
+        fig_feat.update_traces(
+            hovertemplate="<b>%{y}</b><br>Score: %{x:.4f}<extra></extra>"
+        )
+
         st.plotly_chart(fig_feat, use_container_width=True)
-    else:
-        st.info("Feature importance metadata not found.")
 
-with f_col2:
-    if FEATURE_PNG.exists():
-        st.image(str(FEATURE_PNG), caption="Statistical Feature Importance (Saved Image)")
     else:
-        st.write(
-            "**Impact Summary:** The AI primarily relies on Packet Length Mean and Flow Duration "
-            "to distinguish between malicious bot traffic and human users."
+        st.info(
+            "📊 **Impact Summary:** The AI primarily relies on *Packet Length Mean* "
+            "and *Flow Duration* to distinguish between malicious bot traffic and normal users."
         )
+  
+    # ============================================================
+    # SECTION 3: ROBUSTNESS & VISUALS
+    # ============================================================
+    st.markdown("<div class='section-title'>🧪 Validation & Visual Assets</div>", unsafe_allow_html=True)
 
-# ============================================================
-# SECTION 3: ROBUSTNESS & VISUALS
-# ============================================================
-st.markdown("<div class='section-title'>🧪 Validation & Visual Assets</div>", unsafe_allow_html=True)
+    st.subheader("📊 Confusion Matrices")
 
-v_col1, v_col2 = st.columns(2)
-with v_col1:
-    if CONFUSION_PNG.exists():
-        st.image(str(CONFUSION_PNG), caption="Confusion Matrices (Detection Accuracy per Class)")
-    else:
-        st.info("Confusion matrix image not found.")
+    row1_col1, row1_col2 = st.columns(2)
+    row2_col1, row2_col2 = st.columns(2)
 
-with v_col2:
-    if cv_df is not None and not cv_df.empty:
-        required = {"CV Recall Mean", "CV Recall Std"}
-        if required.issubset(set(cv_df.columns)):
-            cv_plot = cv_df.reset_index()
-            color_col = "Model" if "Model" in cv_plot.columns else cv_plot.columns[0]
-            fig_cv = px.scatter(
-                cv_plot,
-                x="CV Recall Mean",
-                y="CV Recall Std",
-                size="CV Recall Mean",
-                color=color_col,
-                title="Cross-Validation Stability (High Mean + Low Std is Ideal)",
-            )
-            st.plotly_chart(fig_cv, use_container_width=True)
-        else:
-            st.info("CV file is present but missing expected columns.")
-    else:
-        if METRIC_PNG.exists():
-            st.image(str(METRIC_PNG), caption="Metric Comparison")
-        else:
-            st.info("Validation metrics not found.")
+    with row1_col1:
+        st.markdown("### J48")
+        st.image("outputs/cm_j48_decision_tree.png", use_container_width=True)
 
-st.markdown("---")
-st.caption("🛡️ DDoS AI Shield Dashboard")
+    with row1_col2:
+        st.markdown("### Random Forest")
+        st.image("outputs/cm_random_forest.png", use_container_width=True)
 
+    with row2_col1:
+        st.markdown("### Naive Bayes")
+        st.image("outputs/cm_naive_bayes.png", use_container_width=True)
+
+    with row2_col2:
+        st.markdown("### XGBoost ")
+        st.image("outputs/cm_xgboost.png", use_container_width=True)
+        
+    st.markdown("---")
+    st.markdown(
+    "<h6 style='text-align: center;'>🛡️ DDoS AI Shield Dashboard</h5>",
+    unsafe_allow_html=True
+)
 # ============================================================
 # SECTION 4: LIVE ALERT FEED
 # ============================================================
-alerts = load_alerts()
-health = load_health()
-realtime_available = ALERT_FILE.exists() or bool(health)
-show_live_monitoring = True
+with tab3:
+        # SECTION 4 LIVE ALERT
 
-if show_live_monitoring:
-    st.markdown("### 🟢 System Status")
-    if realtime_available:
-        st.success("🛡️ Monitoring Active (Realtime Data Available)")
-        st.markdown("<div class='section-title'>🚨 Real-Time Security Events</div>", unsafe_allow_html=True)
+    alerts = load_alerts()
+    health = load_health()
+    realtime_available = ALERT_FILE.exists() or bool(health)
+    show_live_monitoring = True
+    # 🔥 Pause / Resume button
+    PAUSE_FILE = Path("outputs/pause.flag")
+
+    col1, col2 = st.columns(2)
+
+    if PAUSE_FILE.exists():
+        if col1.button("▶ Resume Monitoring"):
+            PAUSE_FILE.unlink(missing_ok=True)
+            st.success("Monitoring resumed")
+            st.rerun()
     else:
-        st.info("Realtime detector is not running yet. Start mode 2 or 5 from `run.py`.")
+        if col1.button("⏸ Pause Monitoring"):
+            PAUSE_FILE.touch()
+            st.warning("Monitoring paused")
+            st.rerun()
+            
+    if show_live_monitoring:
+        st.markdown("### 🟢 System Status")
+        if realtime_available:
+            st.success("🛡️ Monitoring Active (Realtime Data Available)")
+            st.markdown("<div class='section-title'>🚨 Real-Time Security Events</div>", unsafe_allow_html=True)
+        else:
+            st.info("Realtime detector is not running yet. Start mode 2 or 5 from `run.py`.")
 
-    if realtime_available and alerts:
-        alert_df = pd.DataFrame(alerts)
-        if "ip" in alert_df.columns:
-            ip_options = ["All"] + sorted(alert_df["ip"].dropna().astype(str).unique().tolist())
-            selected_ip = st.selectbox("Filter by source IP", ip_options, index=0)
-            if selected_ip != "All":
-                alert_df = alert_df[alert_df["ip"].astype(str) == selected_ip]
+        if realtime_available and alerts:
+            alert_df = pd.DataFrame(alerts)
+            alert_df.columns = alert_df.columns.str.lower()
 
-        if "attack" in alert_df.columns:
-            attack_options = ["All"] + sorted(alert_df["attack"].dropna().astype(str).unique().tolist())
-            selected_attack = st.selectbox("Filter by attack type", attack_options, index=0)
+            # 🔥 Merge IP + Type → Source
+            def get_source(row):
+                ip_type = str(row.get("ip_type", "Unknown"))
+                ip = str(row.get("ip", "N/A"))
+                return ip_type if ip_type != "Unknown" else ip
+
+            alert_df["Source"] = alert_df.apply(get_source, axis=1)
+
+            # 🔥 Filters
+            source_options = ["All"] + sorted(alert_df["Source"].unique().tolist())
+            selected_source = st.selectbox("Filter by Source", source_options)
+
+            if selected_source != "All":
+                alert_df = alert_df[alert_df["Source"] == selected_source]
+
+            alert_df["attack"] = alert_df["attack"].replace({"BENIGN": "Normal"})
+            attack_options = ["All"] + sorted(alert_df["attack"].astype(str).unique().tolist())
+            selected_attack = st.selectbox("Filter by Attack Type", attack_options)
+
             if selected_attack != "All":
-                alert_df = alert_df[alert_df["attack"].astype(str) == selected_attack]
+                alert_df = alert_df[alert_df["attack"] == selected_attack]
 
-        def color_status(val: Any) -> str:
-            text = str(val).upper()
-            color = "#ef4444" if text == "ATTACK" else "#10b981"
-            return f"color: {color}; font-weight: bold"
+            display_cols = ["time", "Source", "attack", "confidence", "threat", "status"]
 
-        if "status" in alert_df.columns:
-            styled = alert_df.style
-            try:
-                styled = styled.map(color_status, subset=["status"])
-            except AttributeError:
-                styled = styled.applymap(color_status, subset=["status"])
-            styled = styled.set_properties(**{"text-align": "center"})
-            styled = styled.set_table_styles(
-                [
-                    {"selector": "th", "props": [("text-align", "center")]},
-                    {"selector": "td", "props": [("text-align", "center")]},
-                ]
-            )
-            st.dataframe(styled, use_container_width=True)
-        if alerts:
-            latest = alerts[0]
-            latest_status = str(latest.get("status", "ATTACK")).upper()
-            if latest_status == "ATTACK":
-                st.error(f"🚨 Latest Event → IP: {latest.get('ip', 'N/A')} | Time: {latest.get('time', 'N/A')}")
+            for col in display_cols:
+                if col not in alert_df.columns:
+                    alert_df[col] = "N/A"
+
+            alert_df = alert_df[display_cols]
+
+            # 1. Format confidence
+            alert_df["confidence"] = pd.to_numeric(alert_df["confidence"], errors="coerce").fillna(0)
+            alert_df["confidence"] = alert_df["confidence"].map(lambda x: f"{x:.2f}")
+
+            # 2. Fix threat
+            def fix_threat(row):
+                if row["status"] == "NORMAL":
+                    return "LOW"
+                return row["threat"]
+
+            alert_df["threat"] = alert_df.apply(fix_threat, axis=1)
+
+            alert_df = alert_df.sort_values(by="time", ascending=False)
+
+            display_df = alert_df.copy()
+            display_df.columns = [col.replace("_", " ").title() for col in display_df.columns]
+            display_df = display_df.rename(columns={"Attack": "Activity"})
+            display_df["Activity"] = display_df["Activity"].replace({"BENIGN": "Normal"})
+
+            # 🔥 Styling
+            styled = display_df.style
+            
+
+            def color_status(val):
+                text = str(val).upper()
+                if text == "ATTACK":
+                    return "color: #ef4444; font-weight: bold"   # red
+                elif text == "SUSPICIOUS":
+                    return "color: #f59e0b; font-weight: bold"
+                elif text == "TRUSTED":
+                    return "color: #3b82f6; font-weight: bold"   # blue
+                elif text == "NORMAL":
+                    return "color: #10b981; font-weight: bold"   # green
+                return ""
+
+
+            def color_threat(val):
+                text = str(val).upper()
+                if text == "HIGH":
+                    return "color: #ef4444; font-weight: bold"
+                elif text == "MEDIUM":
+                    return "color: #f59e0b; font-weight: bold"
+                elif text == "LOW":
+                    return "color: #10b981; font-weight: bold"
+                return ""
+
+            styled = styled.map(color_status, subset=["Status"])
+            styled = styled.map(color_threat, subset=["Threat"])
+            # 🔥 Alert summary (ADD HERE)
+            attack_count = (alert_df["status"] == "ATTACK").sum()
+
+            if attack_count > 0:
+                st.error(f"🚨 {attack_count} Active Attacks Detected")
             else:
-                st.success(f"✅ Latest Event → IP: {latest.get('ip', 'N/A')} | Time: {latest.get('time', 'N/A')}")
-        else:
-            st.table(alert_df)
+                st.success("✅ System Stable — No Active Threats")
+            st.dataframe(styled, use_container_width=True)
 
-        if st.button("🗑️ Clear Alert History"):
-            try:
-                if ALERT_FILE.exists():
-                    ALERT_FILE.unlink()
-                st.cache_data.clear()
-                st.rerun()
-            except Exception as exc:
-                st.error(f"Could not clear alert file: {exc}")
+            # 🔥 Latest event display
+            latest = display_df.iloc[0].to_dict()
 
-        if "ip" in alert_df.columns and not alert_df.empty:
-            st.markdown("#### Top Source IPs")
-            ip_counts = alert_df["ip"].astype(str).value_counts().head(10)
-            top_ips = pd.DataFrame({"IP": ip_counts.index, "Alerts": ip_counts.values})
-            fig_ips = px.bar(top_ips, x="IP", y="Alerts", color="Alerts", color_continuous_scale="Reds")
-            st.plotly_chart(fig_ips, use_container_width=True)
-    elif realtime_available:
-        if ALERT_FILE.exists():
-            st.success("✅ System Secure: No active threats detected in the last window.")
-        else:
+            latest_status = str(latest.get("Status", "NORMAL")).upper()
+            latest_source = latest.get("Source", "N/A")
+            latest_attack = latest.get("Activity", "N/A")
+            latest_threat = latest.get("Threat", "LOW")
+
+            if latest_status == "ATTACK":
+                st.error(f"🚨 ATTACK → {latest_source} | {latest_attack} | Threat: {latest_threat}")
+            elif latest_status == "TRUSTED":
+                st.info(f"🔵 TRUSTED → {latest_source}")
+            else:
+                st.success(f"✅ NORMAL → {latest_source}")
+
+            # 🔥 Clear history
+            if st.button("🗑️ Clear Alert History"):
+                try:
+                    if ALERT_FILE.exists():
+                        ALERT_FILE.unlink()
+                    st.cache_data.clear()
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Could not clear alert file: {exc}")
+
+            # 🔥 Top sources chart
+            st.markdown("#### Top Sources")
+            source_counts = alert_df["Source"].value_counts().head(10)
+            top_src = pd.DataFrame({"Source": source_counts.index, "Alerts": source_counts.values})
+
+            fig = px.bar(top_src, x="Source", y="Alerts", color="Alerts", color_continuous_scale="Reds")
+            st.plotly_chart(fig, use_container_width=True)
+
+        elif realtime_available:
             st.success("✅ No active alerts in the current window.")
-if show_live_monitoring and health:
-    st.markdown("### 🩺 Runtime Health")
-    h1, h2, h3, h4 = st.columns(4)
-    h1.metric("Predictions / min", health.get("predictions_per_min", "N/A"))
-    h2.metric("Alerts / min", health.get("alerts_per_min", "N/A"))
-    h3.metric("Tracked Flows", health.get("flows_tracked", "N/A"))
-    h4.metric("Error Count", health.get("error_count", "N/A"))
+
+    # 🔥 HEALTH METRICS
+    if show_live_monitoring and health:
+        st.markdown("### 🩺 Runtime Health")
+        h1, h2, h3, h4 = st.columns(4)
+        h1.metric("Predictions / min", health.get("predictions_per_min", "N/A"))
+        h2.metric("Alerts / min", health.get("alerts_per_min", "N/A"))
+        h3.metric("Tracked Flows", health.get("flows_tracked", "N/A"))
+        h4.metric("Error Count", health.get("error_count", "N/A"))
+    st.markdown("---")
+    st.markdown(
+    "<h6 style='text-align: center;'>🛡️ DDoS AI Shield Dashboard</h5>",
+    unsafe_allow_html=True
+)

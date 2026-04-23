@@ -156,8 +156,8 @@ def evaluate_all(
     X: pd.DataFrame,
     y: np.ndarray,
     all_results: dict,
-    cv_folds: int = 3,
-    cv_sample_max: int = 200_000,
+    cv_folds: int = 5,
+    cv_sample_max: int = 500_000,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     # -------------------------------
     # SUMMARY TABLE
